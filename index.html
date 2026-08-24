@@ -123,7 +123,7 @@ label{font-size:11px;color:var(--text2);margin-bottom:5px;display:block;font-wei
 .variantes-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:12px}
 .variante-card{background:var(--card2);border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--border);cursor:pointer;transition:all .15s;position:relative}
 .variante-card:active{transform:scale(.97)}
-.variante-card.agotado{opacity:.4;cursor:not-allowed}
+.variante-card.agotado{opacity:.5}
 .variante-card.agotado::after{content:"AGOTADO";position:absolute;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;letter-spacing:.1em;color:var(--danger)}
 .variante-img{width:100%;aspect-ratio:1;object-fit:cover;background:var(--card)}
 .variante-img-placeholder{width:100%;aspect-ratio:1;background:var(--card);display:flex;align-items:center;justify-content:center;font-size:32px}
@@ -1113,7 +1113,7 @@ function abrirVariantes(nombreBase) {
     const ph  = `<div class="variante-img-placeholder" style="${src?"display:none":""}">🧉</div>`;
     const badge = s<=0?"badge-danger":s<=2?"badge-warn":"badge-ok";
     return `
-      <div class="variante-card ${s<=0?"agotado":""}" onclick="${s>0?"editarDesdeVariante("+i+", '"+nombreBase.replace(/'/g,"\\'")+"')":""}">
+      <div class="variante-card ${s<=0?"agotado":""}" onclick="editarDesdeVariante(${i}, '${nombreBase.replace(/'/g,"\\'")}')">
         ${img}${ph}
         <div class="variante-info">
           <div class="variante-color">${p.color||p.art||"—"}</div>
