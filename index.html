@@ -362,6 +362,10 @@ label{font-size:11px;color:var(--text2);margin-bottom:5px;display:block;font-wei
     <svg class="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="5"/><path d="M10.5 10.5L14 14"/></svg>
     <input type="text" id="stock-busq" placeholder="Buscar producto..." oninput="filtrarStock()">
   </div>
+  <!-- Tabs por categoría -->
+  <div id="stock-tabs" style="display:flex;gap:8px;margin-bottom:14px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch">
+    <button class="btn-sm btn-accent2" id="tab-Todos" onclick="filtrarCategoria('Todos')" style="white-space:nowrap">Todos</button>
+  </div>
   <div id="stock-list"><div class="loading"><div class="spinner"></div>Cargando...</div></div>
 </div>
 
@@ -560,6 +564,7 @@ label{font-size:11px;color:var(--text2);margin-bottom:5px;display:block;font-wei
     <div class="modal-handle"></div>
     <div class="modal-title">Editar producto</div>
     <div style="font-size:12px;color:var(--accent2);font-family:monospace;margin-bottom:14px" id="edit-art-label"></div>
+    <div class="field"><label>Código ART</label><input type="text" id="edit-art-nuevo" style="font-family:monospace;font-weight:700;letter-spacing:.04em" autocomplete="off"></div>
     <div class="field"><label>Nombre</label><input type="text" id="edit-nombre" autocomplete="off"></div>
     <div class="field"><label>Subcategoría</label><input type="text" id="edit-sub" autocomplete="off"></div>
     <div class="row row-2">
@@ -1054,13 +1059,42 @@ function renderAdicionales() {
 // ── STOCK ───────────────────────────────────────────────
 let stockData = [];
 
+let categoriaActiva = "Todos";
+
 async function cargarStock() {
   document.getElementById("stock-list").innerHTML = '<div class="loading"><div class="spinner"></div>Cargando...</div>';
   try {
     stockData = await sheetGet("productos");
     todosLosProductos = stockData;
-    renderStock(stockData);
-  } catch(e) { document.getElementById("stock-list").innerHTML = '<div class="loading">Error al cargar</div>'; }
+
+    // Construir tabs dinámicos por categoría
+    const cats = ["Todos", ...new Set(stockData.map(p => p.categoria||"Otros").filter(Boolean))];
+    const tabsEl = document.getElementById("stock-tabs");
+    tabsEl.innerHTML = cats.map(c =>
+      `<button class="btn-sm ${c===categoriaActiva?"btn-accent2":"btn-secondary"}" id="tab-${c.replace(/\s/g,'-')}" onclick="filtrarCategoria('${c}')" style="white-space:nowrap">${c}</button>`
+    ).join("");
+
+    renderStock(stockData.filter(p => categoriaActiva==="Todos" || (p.categoria||"Otros")===categoriaActiva));
+  } catch(e) {
+    document.getElementById("stock-list").innerHTML = '<div class="loading">Error al cargar</div>';
+  }
+}
+
+function filtrarCategoria(cat) {
+  categoriaActiva = cat;
+  // Actualizar botones
+  document.querySelectorAll("#stock-tabs button").forEach(b => {
+    b.className = b.textContent===cat ? "btn-sm btn-accent2" : "btn-sm btn-secondary";
+  });
+  const busq = document.getElementById("stock-busq").value.toLowerCase();
+  let data = stockData.filter(p => cat==="Todos" || (p.categoria||"Otros")===cat);
+  if (busq) data = data.filter(p =>
+    (p.art||"").toLowerCase().includes(busq) ||
+    (p.nombre||"").toLowerCase().includes(busq) ||
+    (p.subcategoria||"").toLowerCase().includes(busq) ||
+    (p.color||"").toLowerCase().includes(busq)
+  );
+  renderStock(data);
 }
 
 function renderStock(data) {
@@ -1132,6 +1166,7 @@ function editarDesdeVariante(idx, nombreBase) {
   cerrarModal("modal-variantes");
   window._editandoProducto = p;
   document.getElementById("edit-art-label").textContent = p.art;
+  document.getElementById("edit-art-nuevo").value  = p.art;
   document.getElementById("edit-nombre").value  = p.nombre||"";
   document.getElementById("edit-sub").value     = p.subcategoria||"";
   document.getElementById("edit-costo").value   = p.costo||"";
@@ -1148,12 +1183,14 @@ function editarDesdeVariante(idx, nombreBase) {
 
 function filtrarStock() {
   const q = document.getElementById("stock-busq").value.toLowerCase();
-  renderStock(stockData.filter(p =>
+  let data = categoriaActiva==="Todos" ? stockData : stockData.filter(p => (p.categoria||"Otros")===categoriaActiva);
+  if (q) data = data.filter(p =>
     (p.art||"").toLowerCase().includes(q) ||
     (p.nombre||"").toLowerCase().includes(q) ||
     (p.subcategoria||"").toLowerCase().includes(q) ||
     (p.color||"").toLowerCase().includes(q)
-  ));
+  );
+  renderStock(data);
 }
 
 // ── EDITAR PRODUCTO ─────────────────────────────────────
@@ -1171,6 +1208,7 @@ function actualizarMargenEdit() {
 
 async function guardarEdicionProducto() {
   const p       = window._editandoProducto;
+  const artNuevo= document.getElementById("edit-art-nuevo").value.trim().toUpperCase();
   const nombre  = document.getElementById("edit-nombre").value.trim().toUpperCase();
   const sub     = document.getElementById("edit-sub").value.trim();
   const costo   = parseFloat(document.getElementById("edit-costo").value)||0;
@@ -1179,10 +1217,11 @@ async function guardarEdicionProducto() {
   const foto    = document.getElementById("edit-foto").value.trim();
   if (!nombre) { toast("El nombre es obligatorio","error"); return; }
   try {
-    await sheetPost({action:"updateProduct", art:p.art, nombre, sub, costo, precio, stock, foto});
+    await sheetPost({action:"updateProduct", art:p.art, artNuevo, nombre, sub, costo, precio, stock, foto});
     cerrarModal("modal-editar-prod");
     toast(`✓ ${nombre} actualizado`,"success");
     await cargarStock();
+    todosLosProductos = stockData;
   } catch(e) { toast("Error: "+e.message,"error"); }
 }
 
@@ -1218,35 +1257,65 @@ async function guardarProducto() {
   const nombre = document.getElementById("c-nombre").value.trim();
   const stock  = parseInt(document.getElementById("c-stock").value)||0;
   const foto   = document.getElementById("c-foto").value.trim();
-  if (!art||!nombre) { toast("Categoría, nombre y color son obligatorios","error"); return; }
+  const cat    = document.getElementById("c-cat").value;
+  const color  = document.getElementById("c-color").value.trim();
+
+  if (!art || !nombre || !cat) {
+    toast("Categoría, nombre y código son obligatorios","error");
+    return;
+  }
+
   try {
     const productos = await sheetGet("productos");
     todosLosProductos = productos;
-    const existente = productos.find(p => (p.art||"").toUpperCase()===art);
+
+    // La clave única es SIEMPRE el ART — sin importar el nombre
+    const existente = productos.find(p => (p.art||"").toUpperCase() === art);
+
     if (existente) {
-      const nuevoStock = parseInt(existente.stock||0)+stock;
-      await sheetPost({action:"updateProduct", art, nombre:existente.nombre, sub:existente.subcategoria||"",
-        costo:parseFloat(existente.costo||0), precio:parseFloat(existente.precio_venta||0), stock:nuevoStock, foto:foto||existente.foto||""});
-      toast(`✓ Stock actualizado — ${nuevoStock} unidades`,"success");
+      // ART ya existe → sumar stock solamente
+      const nuevoStock = parseInt(existente.stock||0) + stock;
+      if (!confirm(`"${existente.nombre}" (${art}) ya existe.\n¿Sumás ${stock} unidades? Quedará en ${nuevoStock}.`)) return;
+      await sheetPost({
+        action:"updateProduct",
+        art: art,
+        artNuevo: art,
+        nombre: existente.nombre,
+        sub: existente.subcategoria||"",
+        costo: parseFloat(existente.costo||0),
+        precio: parseFloat(existente.precio_venta||0),
+        stock: nuevoStock,
+        foto: foto || existente.foto || ""
+      });
+      toast(`✓ Stock actualizado — ${nuevoStock} unidades en total`, "success");
     } else {
+      // ART nuevo → crear producto
       const fecha = new Date().toISOString().replace("T"," ").slice(0,19);
-      const color = document.getElementById("c-color").value.trim();
       await sheetPost({tab:"productos", values:[
-        art, nombre.toUpperCase(), document.getElementById("c-cat").value,
-        document.getElementById("c-sub").value, "", color, stock,
+        art,
+        nombre.toUpperCase(),
+        cat,
+        document.getElementById("c-sub").value.trim(),
+        "", color, stock,
         parseFloat(document.getElementById("c-costo").value)||0,
-        parseFloat(document.getElementById("c-precio").value)||0, fecha, foto
+        parseFloat(document.getElementById("c-precio").value)||0,
+        fecha, foto
       ]});
-      toast("✓ Producto guardado","success");
+      toast("✓ Producto guardado", "success");
     }
-    ["c-art","c-nombre","c-sub","c-costo","c-precio","c-stock","c-foto","c-color"].forEach(id => document.getElementById(id).value="");
+
+    // Limpiar formulario
+    ["c-art","c-nombre","c-sub","c-costo","c-precio","c-stock","c-foto","c-color"].forEach(id =>
+      document.getElementById(id).value = ""
+    );
     document.getElementById("c-cat").value = "";
     document.getElementById("margen-display").style.display = "none";
     document.getElementById("codigo-box").style.display = "none";
     document.getElementById("codigo-manual-field").style.display = "none";
     document.getElementById("foto-preview-carga").classList.remove("visible");
     todosLosProductos = await sheetGet("productos");
-  } catch(e) { toast("Error: "+e.message,"error"); }
+
+  } catch(e) { toast("Error: "+e.message, "error"); }
 }
 
 // ── HISTORIAL ───────────────────────────────────────────
