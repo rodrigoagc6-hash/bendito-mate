@@ -382,6 +382,7 @@ label{font-size:11px;color:var(--text2);margin-bottom:5px;display:block;font-wei
     <div class="metric"><div class="metric-label">Este mes</div><div class="metric-value" id="h-mes">$0</div><div class="metric-delta" id="h-mes-cant">0 pedidos</div></div>
     <div class="metric"><div class="metric-label">Canal líder</div><div class="metric-value" style="font-size:18px" id="h-canal">—</div><div class="metric-delta">más ventas</div></div>
   </div>
+  <div id="h-rentabilidad" style="margin-bottom:12px"></div>
   <div class="search-bar">
     <svg class="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="5"/><path d="M10.5 10.5L14 14"/></svg>
     <input type="text" id="hist-busq" placeholder="Buscar por cliente u orden..." oninput="filtrarHistorial()">
@@ -405,7 +406,27 @@ label{font-size:11px;color:var(--text2);margin-bottom:5px;display:block;font-wei
   </div>
   <div class="page-header"><h1>Cargar <span class="accent">producto</span></h1><p>El código se genera automáticamente</p></div>
 
-  <div class="card">
+  <!-- Steps indicator -->
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+    <div id="step-1-ind" style="display:flex;align-items:center;gap:6px">
+      <div style="width:22px;height:22px;border-radius:50%;background:var(--accent);color:#000;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center">1</div>
+      <span style="font-size:12px;color:var(--accent);font-weight:600">Identificación</span>
+    </div>
+    <div style="flex:1;height:1px;background:var(--border)"></div>
+    <div id="step-2-ind" style="display:flex;align-items:center;gap:6px">
+      <div id="step-2-circle" style="width:22px;height:22px;border-radius:50%;background:var(--border);color:var(--text3);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center">2</div>
+      <span id="step-2-label" style="font-size:12px;color:var(--text3);font-weight:600">Precios</span>
+    </div>
+    <div style="flex:1;height:1px;background:var(--border)"></div>
+    <div id="step-3-ind" style="display:flex;align-items:center;gap:6px">
+      <div id="step-3-circle" style="width:22px;height:22px;border-radius:50%;background:var(--border);color:var(--text3);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center">3</div>
+      <span id="step-3-label" style="font-size:12px;color:var(--text3);font-weight:600">Foto</span>
+    </div>
+  </div>
+
+  <!-- Paso 1: Identificación -->
+  <div id="carga-step-1" class="card">
+    <div class="card-title">Paso 1 — Identificación</div>
     <!-- Código generado automático -->
     <div class="codigo-generado" id="codigo-box" style="display:none">
       <div><div class="codigo-label">Código generado</div><div class="codigo-valor" id="codigo-generado-val">—</div></div>
@@ -471,12 +492,14 @@ label{font-size:11px;color:var(--text2);margin-bottom:5px;display:block;font-wei
     <div class="field">
       <label>📸 Link de foto (Google Drive)</label>
       <input type="text" id="c-foto" placeholder="Pegá el link público de Drive..." oninput="previewFoto()" autocomplete="off">
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">Drive → clic derecho foto → "Obtener enlace" → "Cualquiera con el enlace"</div>
-      <img id="foto-preview-carga" class="foto-preview" alt="Preview">
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">Drive → clic derecho foto → "Compartir" → "Cualquiera con el enlace"</div>
+      <div id="foto-preview-carga" style="width:100%;margin-top:10px;border-radius:var(--radius-sm);overflow:hidden;display:none">
+        <img id="foto-preview-img" style="width:100%;aspect-ratio:1;object-fit:cover;background:var(--card2)" alt="Preview">
+      </div>
     </div>
   </div>
 
-  <button class="btn btn-primary" onclick="guardarProducto()">GUARDAR ARTÍCULO</button>
+  <button class="btn btn-primary" onclick="guardarProducto()" id="btn-guardar-prod">GUARDAR ARTÍCULO</button>
 </div>
 
 <!-- ══════════════════════════════════════════
@@ -512,11 +535,11 @@ label{font-size:11px;color:var(--text2);margin-bottom:5px;display:block;font-wei
 <div class="modal-overlay" id="modal-ticket">
   <div class="modal">
     <div class="modal-handle"></div>
-    <div class="modal-title">Confirmar venta</div>
+    <div class="modal-title" id="modal-ticket-titulo">Confirmar venta</div>
     <div id="ticket-content"></div>
-    <button class="btn btn-primary" onclick="confirmarVenta()" style="margin-top:12px">✓ CONFIRMAR Y REGISTRAR</button>
+    <button class="btn btn-primary" id="btn-confirmar-venta" onclick="confirmarVenta()" style="margin-top:12px">✓ CONFIRMAR Y REGISTRAR</button>
     <div style="height:8px"></div>
-    <button class="btn btn-secondary" onclick="cerrarModal('modal-ticket')">← Volver al carrito</button>
+    <button class="btn btn-secondary" onclick="cerrarModal('modal-ticket')">← Cerrar</button>
   </div>
 </div>
 
@@ -633,18 +656,41 @@ const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzjbjmBxOKA7bjyEjett
 const CANALES    = {"Instagram":"IG","WhatsApp":"WA","Tienda Nube":"TN","Local":"LOC"};
 const PREFIJOS   = {"Mates":"MAT","Stanley":"STA","Vasos":"VAS","Accesorios":"ACC","Combos":"COM","Otros":"OTR"};
 
-// ── API ─────────────────────────────────────────────────
-async function sheetGet(tab) {
+// ── CACHÉ GLOBAL ────────────────────────────────────────
+const cache = { productos:null, ventas:null, detalle:null, ts:{} };
+const CACHE_TTL = 60000; // 1 minuto
+
+async function sheetGet(tab, forzar=false) {
+  const ahora = Date.now();
+  if (!forzar && cache[tab] && cache.ts[tab] && (ahora - cache.ts[tab]) < CACHE_TTL) {
+    return cache[tab];
+  }
   const r = await fetch(`${SCRIPT_URL}?tab=${tab}`);
   if (!r.ok) throw new Error(`Error ${r.status}`);
   const d = await r.json();
   if (!d.ok) throw new Error(d.error || "Error script");
+  cache[tab] = d.data;
+  cache.ts[tab] = ahora;
   return d.data;
 }
+
+function invalidarCache(...tabs) {
+  tabs.forEach(t => { cache[t] = null; cache.ts[t] = null; });
+}
+
 async function sheetPost(body) {
   const r = await fetch(SCRIPT_URL, {method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(body)});
   if (!r.ok) throw new Error(`Error ${r.status}`);
   return r.json();
+}
+
+// ── FEEDBACK VISUAL ─────────────────────────────────────
+function mostrarGuardando(btn, texto="Guardando...") {
+  const original = btn.textContent;
+  btn.textContent = texto;
+  btn.disabled = true;
+  btn.style.opacity = ".6";
+  return () => { btn.textContent = original; btn.disabled = false; btn.style.opacity = "1"; };
 }
 
 // ── NAV ─────────────────────────────────────────────────
@@ -684,10 +730,15 @@ function driveUrlToImg(url) {
 
 function previewFoto() {
   const url = document.getElementById("c-foto").value;
-  const img = document.getElementById("foto-preview-carga");
   const src = driveUrlToImg(url);
-  if (src) { img.src = src; img.classList.add("visible"); }
-  else { img.classList.remove("visible"); }
+  const wrapper = document.getElementById("foto-preview-carga");
+  const img     = document.getElementById("foto-preview-img");
+  if (src) {
+    img.src = src;
+    wrapper.style.display = "block";
+  } else {
+    wrapper.style.display = "none";
+  }
 }
 
 function previewFotoEdit() {
@@ -767,15 +818,15 @@ async function cargarMetricas() {
     document.getElementById("m-critico").textContent  = crit;
     const ss = document.getElementById("sidebar-sync");
     if (ss) ss.textContent = "Última sync: "+new Date().toLocaleTimeString("es-AR");
-    await actualizarNroOrden();
+    // Nro orden usa cache de ventas ya cargado
+    _actualizarNroOrdenDesdeCache(ventas);
   } catch(e) { console.error(e); }
 }
 
-async function actualizarNroOrden() {
+function _actualizarNroOrdenDesdeCache(ventas) {
   try {
     const canal = document.getElementById("ped-canal").value;
     const pref  = CANALES[canal] || "ORD";
-    const ventas = await sheetGet("ventas");
     const fil = ventas.filter(v => v.canal===canal && v.nro_orden);
     let num = 1;
     if (fil.length > 0) {
@@ -783,6 +834,13 @@ async function actualizarNroOrden() {
       try { num = parseInt(ult[0].nro_orden.split("-")[1]) + 1; } catch { num = fil.length+1; }
     }
     document.getElementById("ped-orden").value = `${pref}-${String(num).padStart(3,"0")}`;
+  } catch(e) {}
+}
+
+async function actualizarNroOrden() {
+  try {
+    const ventas = await sheetGet("ventas");
+    _actualizarNroOrdenDesdeCache(ventas);
   } catch(e) {}
 }
 
@@ -956,6 +1014,8 @@ function abrirTicket() {
       <div class="ticket-row total"><span>Total a cobrar</span><span>$${total.toLocaleString("es-AR",{maximumFractionDigits:0})}</span></div>
     </div>
     <div style="font-size:13px;color:var(--text2);text-align:center">${metodo}</div>`;
+  document.getElementById("modal-ticket-titulo").textContent = "Confirmar venta";
+  document.getElementById("btn-confirmar-venta").style.display = "block";
   document.getElementById("modal-ticket").classList.add("open");
 }
 
@@ -989,6 +1049,9 @@ async function confirmarVenta() {
 
     // Descontar stock
     await sheetPost({action:"descontarStock", items:carrito.map(it=>({art:it.art,cantidad:it.cantidad}))});
+
+    // Invalidar caché para que próxima lectura sea fresca
+    invalidarCache("ventas","detalle_ventas","productos");
 
     // WhatsApp
     const orden   = document.getElementById("ped-orden").value;
@@ -1218,6 +1281,7 @@ async function guardarEdicionProducto() {
   if (!nombre) { toast("El nombre es obligatorio","error"); return; }
   try {
     await sheetPost({action:"updateProduct", art:p.art, artNuevo, nombre, sub, costo, precio, stock, foto});
+    invalidarCache("productos");
     cerrarModal("modal-editar-prod");
     toast(`✓ ${nombre} actualizado`,"success");
     await cargarStock();
@@ -1231,6 +1295,7 @@ async function eliminarProducto() {
   if (!confirm(`¿Eliminar "${p.nombre}" del inventario?`)) return;
   try {
     await sheetPost({action:"deleteProduct", art:p.art});
+    invalidarCache("productos");
     cerrarModal("modal-editar-prod");
     toast(`🗑 Eliminado`,"success");
     await cargarStock();
@@ -1265,46 +1330,38 @@ async function guardarProducto() {
     return;
   }
 
+  const btnGuardar = document.getElementById("btn-guardar-prod");
+  const restaurar  = mostrarGuardando(btnGuardar, "Guardando...");
+
   try {
     const productos = await sheetGet("productos");
     todosLosProductos = productos;
-
-    // La clave única es SIEMPRE el ART — sin importar el nombre
     const existente = productos.find(p => (p.art||"").toUpperCase() === art);
 
     if (existente) {
-      // ART ya existe → sumar stock solamente
       const nuevoStock = parseInt(existente.stock||0) + stock;
-      if (!confirm(`"${existente.nombre}" (${art}) ya existe.\n¿Sumás ${stock} unidades? Quedará en ${nuevoStock}.`)) return;
+      if (!confirm(`"${existente.nombre}" (${art}) ya existe.\n¿Sumás ${stock} unidades? Quedará en ${nuevoStock}.`)) { restaurar(); return; }
       await sheetPost({
-        action:"updateProduct",
-        art: art,
-        artNuevo: art,
-        nombre: existente.nombre,
-        sub: existente.subcategoria||"",
-        costo: parseFloat(existente.costo||0),
-        precio: parseFloat(existente.precio_venta||0),
-        stock: nuevoStock,
-        foto: foto || existente.foto || ""
+        action:"updateProduct", art, artNuevo:art,
+        nombre:existente.nombre, sub:existente.subcategoria||"",
+        costo:parseFloat(existente.costo||0), precio:parseFloat(existente.precio_venta||0),
+        stock:nuevoStock, foto:foto||existente.foto||""
       });
       toast(`✓ Stock actualizado — ${nuevoStock} unidades en total`, "success");
     } else {
-      // ART nuevo → crear producto
       const fecha = new Date().toISOString().replace("T"," ").slice(0,19);
       await sheetPost({tab:"productos", values:[
-        art,
-        nombre.toUpperCase(),
-        cat,
+        art, nombre.toUpperCase(), cat,
         document.getElementById("c-sub").value.trim(),
         "", color, stock,
         parseFloat(document.getElementById("c-costo").value)||0,
         parseFloat(document.getElementById("c-precio").value)||0,
         fecha, foto
       ]});
-      toast("✓ Producto guardado", "success");
+      toast("✓ Producto guardado ✓", "success");
     }
 
-    // Limpiar formulario
+    invalidarCache("productos");
     ["c-art","c-nombre","c-sub","c-costo","c-precio","c-stock","c-foto","c-color"].forEach(id =>
       document.getElementById(id).value = ""
     );
@@ -1312,39 +1369,77 @@ async function guardarProducto() {
     document.getElementById("margen-display").style.display = "none";
     document.getElementById("codigo-box").style.display = "none";
     document.getElementById("codigo-manual-field").style.display = "none";
-    document.getElementById("foto-preview-carga").classList.remove("visible");
-    todosLosProductos = await sheetGet("productos");
+    document.getElementById("foto-preview-carga").style.display = "none";
+    todosLosProductos = await sheetGet("productos", true);
 
-  } catch(e) { toast("Error: "+e.message, "error"); }
+  } catch(e) {
+    toast("Error: "+e.message, "error");
+  } finally {
+    restaurar();
+  }
 }
 
 // ── HISTORIAL ───────────────────────────────────────────
 let historialData = [];
+let detalleData   = [];
 
 async function cargarHistorial() {
   document.getElementById("historial-list").innerHTML = '<div class="loading"><div class="spinner"></div>Cargando...</div>';
   try {
-    const [ventas, detalle] = await Promise.all([sheetGet("ventas"), sheetGet("detalle_ventas")]);
+    const [ventas, detalle, productos] = await Promise.all([
+      sheetGet("ventas"), sheetGet("detalle_ventas"), sheetGet("productos")
+    ]);
     historialData = ventas.sort((a,b) => parseInt(b.id||0)-parseInt(a.id||0));
+    detalleData   = detalle;
+
+    // Métricas del mes
     const mes = new Date().toISOString().slice(0,7);
     const vm  = ventas.filter(v => v.fecha&&v.fecha.startsWith(mes));
-    const ids = new Set(vm.map(v=>v.id));
-    const dm  = detalle.filter(d => ids.has(d.id_venta));
-    const tot = dm.reduce((s,d) => s+parseFloat(d.precio_unitario||0)*parseInt(d.cantidad||1), 0);
-    document.getElementById("h-mes").textContent    = "$"+tot.toLocaleString("es-AR",{maximumFractionDigits:0});
+    const ids = new Set(vm.map(v=>String(v.id)));
+    const dm  = detalle.filter(d => ids.has(String(d.id_venta)));
+
+    const totalVentas = dm.reduce((s,d) => s+parseFloat(d.precio_unitario||0)*parseInt(d.cantidad||1), 0);
+
+    // Rentabilidad: ingreso - costo
+    const mapaCosto = {};
+    productos.forEach(p => { mapaCosto[(p.art||"").toUpperCase()] = parseFloat(p.costo||0); });
+    const costoTotal = dm
+      .filter(d => (d.art||"").toUpperCase() !== "ADICIONAL")
+      .reduce((s,d) => s + (mapaCosto[(d.art||"").toUpperCase()]||0)*parseInt(d.cantidad||1), 0);
+    const ganancia  = totalVentas - costoTotal;
+    const margenPct = totalVentas > 0 ? (ganancia/totalVentas*100).toFixed(0) : 0;
+
+    document.getElementById("h-mes").textContent     = "$"+totalVentas.toLocaleString("es-AR",{maximumFractionDigits:0});
     document.getElementById("h-mes-cant").textContent = vm.length+" pedidos";
+
+    // Panel rentabilidad
+    const rentEl = document.getElementById("h-rentabilidad");
+    if (rentEl) {
+      rentEl.innerHTML = `
+        <div class="metric" style="grid-column:1/-1;background:rgba(200,240,74,.06);border-color:rgba(200,240,74,.2)">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div><div class="metric-label">Ganancia este mes</div><div class="metric-value" style="color:var(--accent)">$${ganancia.toLocaleString("es-AR",{maximumFractionDigits:0})}</div></div>
+            <div style="text-align:right"><div class="metric-label">Margen</div><div style="font-size:28px;font-weight:800;color:${margenPct>=50?"var(--accent)":margenPct>=30?"var(--warn)":"var(--danger)"}">${margenPct}%</div></div>
+            <div style="text-align:right"><div class="metric-label">Costo vendido</div><div style="font-size:18px;font-weight:700;color:var(--text2)">$${costoTotal.toLocaleString("es-AR",{maximumFractionDigits:0})}</div></div>
+          </div>
+        </div>`;
+    }
+
     const cc = {}; ventas.forEach(v => { cc[v.canal]=(cc[v.canal]||0)+1; });
     const top = Object.entries(cc).sort((a,b)=>b[1]-a[1])[0];
     document.getElementById("h-canal").textContent = top?top[0]:"—";
     renderHistorial(historialData);
-  } catch(e) { document.getElementById("historial-list").innerHTML = '<div class="loading">Error al cargar</div>'; }
+  } catch(e) {
+    document.getElementById("historial-list").innerHTML = '<div class="loading">Error al cargar</div>';
+    console.error(e);
+  }
 }
 
 function renderHistorial(data) {
   const el = document.getElementById("historial-list");
   if (!data.length) { el.innerHTML = '<div class="loading">Sin ventas registradas</div>'; return; }
   el.innerHTML = data.map(v=>`
-    <div class="venta-item">
+    <div class="venta-item" onclick="verDetalleVenta('${v.id}')" style="cursor:pointer">
       <div class="venta-header">
         <span class="venta-orden">${v.nro_orden||"—"}</span>
         <span class="venta-total">$${parseFloat(v.total||0).toLocaleString("es-AR",{maximumFractionDigits:0})}</span>
@@ -1353,8 +1448,36 @@ function renderHistorial(data) {
         <span class="venta-canal">${v.canal||"—"}</span>${v.cliente||"—"} · ${v.metodo_pago||""}
         ${v.nota?`<br><span style="color:var(--text3);font-size:11px">📝 ${v.nota}</span>`:""}
         <br><span style="color:var(--text3)">${v.fecha?v.fecha.slice(0,16):""}</span>
+        <span style="float:right;font-size:11px;color:var(--accent2)">ver detalle ›</span>
       </div>
     </div>`).join("");
+}
+
+function verDetalleVenta(idVenta) {
+  const venta   = historialData.find(v => String(v.id)===String(idVenta));
+  const items   = detalleData.filter(d => String(d.id_venta)===String(idVenta));
+  if (!venta) return;
+
+  const itemsHTML = items.map(d => `
+    <div class="ticket-row">
+      <span>${d.art==="ADICIONAL"?"✦ ":""}${d.nombre_prod||d.nombre||"—"} x${d.cantidad}</span>
+      <span>$${(parseFloat(d.precio_unitario||0)*parseInt(d.cantidad||1)).toLocaleString("es-AR",{maximumFractionDigits:0})}</span>
+    </div>`).join("");
+
+  document.getElementById("ticket-content").innerHTML = `
+    <div style="font-size:13px;color:var(--text2);margin-bottom:12px">
+      <strong style="color:var(--text)">${venta.cliente||"—"}</strong> · ${venta.canal||""} · ${venta.nro_orden||""}
+      <br><span style="font-size:11px">${venta.fecha?venta.fecha.slice(0,16):""} · ${venta.metodo_pago||""}</span>
+    </div>
+    <div class="ticket">
+      ${itemsHTML}
+      <div class="ticket-row total"><span>Total</span><span>$${parseFloat(venta.total||0).toLocaleString("es-AR",{maximumFractionDigits:0})}</span></div>
+    </div>
+    ${venta.nota?`<div style="font-size:12px;color:var(--text2);margin-top:8px">📝 ${venta.nota}</div>`:""}`;
+
+  document.getElementById("modal-ticket-titulo").textContent = "Detalle del pedido";
+  document.getElementById("btn-confirmar-venta").style.display = "none";
+  document.getElementById("modal-ticket").classList.add("open");
 }
 
 function filtrarFecha(periodo) {
