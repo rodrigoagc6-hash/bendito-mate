@@ -154,6 +154,9 @@ label{font-size:11px;color:var(--text2);margin-bottom:5px;display:block;font-wei
 </head>
 <body>
 
+<!-- SheetJS (lectura de Excel/CSV) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
 <!-- Firebase SDK -->
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -172,8 +175,12 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db  = getFirestore(app);
 
-const CANALES  = {"Instagram":"IG","WhatsApp":"WA","Tienda Nube":"TN","Local":"LOC"};
-const PREFIJOS = {"Mates":"MAT","Stanley":"STA","Vasos":"VAS","Accesorios":"ACC","Combos":"COM","Otros":"OTR"};
+// ── CONFIG CLOUDINARY (subida de fotos sin Drive) ───────
+const CLOUDINARY_CLOUD_NAME    = "euznmg7q";
+const CLOUDINARY_UPLOAD_PRESET = "bendito_mate_unsigned"; // ⚠️ Creá este preset (unsigned) en Cloudinary > Settings > Upload
+
+const CANALES_DEFAULT    = [["Instagram","IG"],["WhatsApp","WA"],["Tienda Nube","TN"],["Local","LOC"]];
+const CATEGORIAS_DEFAULT = [["Mates","MAT"],["Stanley","STA"],["Vasos","VAS"],["Accesorios","ACC"],["Combos","COM"],["Otros","OTR"]];
 
 // ── ESTADO GLOBAL ───────────────────────────────────────
 let productos      = [];
@@ -184,6 +191,9 @@ let adicionales    = [];
 let productoActual = null;
 let categoriaActiva = "Todos";
 let dropdownIndex  = -1;
+let canalesList     = [];
+let categoriasList  = [];
+let seedCanalesHecho = false, seedCategoriasHecho = false;
 
 // ── TOAST ───────────────────────────────────────────────
 function toast(msg, tipo="success") {
@@ -205,7 +215,8 @@ window.navTo = function(page, btn) {
   if (page==="stock")     renderStock();
   if (page==="historial") renderHistorialPage();
   if (page==="pedidos")   renderMetricas();
-  if (page==="config")    renderConfig();
+  if (page==="resumen")   renderResumen();
+  if (page==="config")  { renderCanalesConfig(); renderCategoriasConfig(); actualizarUltimaSync(); }
 }
 
 // ── CARGA INICIAL DE DATOS ──────────────────────────────
@@ -215,6 +226,7 @@ async function cargarDatos() {
     productos = snap.docs.map(d => ({id:d.id, ...d.data()}));
     renderStock();
     renderMetricas();
+    renderResumen();
   });
 
   // Ventas en tiempo real
@@ -222,11 +234,29 @@ async function cargarDatos() {
     ventas = snap.docs.map(d => ({id:d.id, ...d.data()}));
     renderMetricas();
     renderHistorialPage();
+    renderResumen();
   });
 
   // Detalle ventas
   onSnapshot(collection(db, "detalle_ventas"), snap => {
     detalleVentas = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    renderResumen();
+  });
+
+  // Canales de venta (editables en Config)
+  onSnapshot(collection(db, "canales"), snap => {
+    canalesList = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    if (canalesList.length === 0) seedCanalesSiVacio();
+    poblarSelectCanales();
+    renderCanalesConfig();
+  });
+
+  // Categorías de producto (editables en Config)
+  onSnapshot(collection(db, "categorias"), snap => {
+    categoriasList = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    if (categoriasList.length === 0) seedCategoriasSiVacio();
+    poblarSelectCategorias();
+    renderCategoriasConfig();
   });
 }
 
@@ -252,7 +282,7 @@ function renderMetricas() {
 function actualizarNroOrden() {
   const canal = document.getElementById("ped-canal")?.value;
   if (!canal) return;
-  const pref  = CANALES[canal] || "ORD";
+  const pref  = canalesList.find(c=>c.nombre===canal)?.prefijo || "ORD";
   const fil   = ventas.filter(v => v.canal===canal && v.nro_orden);
   let num = 1;
   if (fil.length > 0) {
@@ -260,6 +290,129 @@ function actualizarNroOrden() {
   }
   const el = document.getElementById("ped-orden");
   if (el) el.value = `${pref}-${String(num).padStart(3,"0")}`;
+}
+
+// ── CANALES Y CATEGORÍAS (editables desde Config) ───────
+async function seedCanalesSiVacio() {
+  if (seedCanalesHecho) return; seedCanalesHecho = true;
+  for (const [nombre,prefijo] of CANALES_DEFAULT) await addDoc(collection(db,"canales"),{nombre,prefijo});
+}
+async function seedCategoriasSiVacio() {
+  if (seedCategoriasHecho) return; seedCategoriasHecho = true;
+  for (const [nombre,prefijo] of CATEGORIAS_DEFAULT) await addDoc(collection(db,"categorias"),{nombre,prefijo});
+}
+
+function poblarSelectCanales() {
+  const sel = document.getElementById("ped-canal");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = canalesList.map(c=>`<option value="${c.nombre}">${c.nombre}</option>`).join("");
+  if (canalesList.some(c=>c.nombre===prev)) sel.value = prev;
+  actualizarNroOrden();
+}
+
+function poblarSelectCategorias() {
+  const sel = document.getElementById("c-cat");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— Elegí —</option>'+categoriasList.map(c=>`<option value="${c.nombre}">${c.nombre} (${c.prefijo})</option>`).join("");
+  if (categoriasList.some(c=>c.nombre===prev)) sel.value = prev;
+}
+
+function renderCanalesConfig() {
+  const ce = document.getElementById("canales-config");
+  if (!ce) return;
+  if (!canalesList.length) { ce.innerHTML='<div class="loading">Sin canales cargados</div>'; return; }
+  ce.innerHTML = canalesList.map(c=>`
+    <div class="config-item">
+      <span class="config-item-label">${c.nombre} <span class="badge badge-ok" style="margin-left:6px">${c.prefijo}</span></span>
+      <span style="display:flex;gap:6px">
+        <button class="btn-sm btn-secondary" onclick="editarCanal('${c.id}')" style="padding:5px 9px">✎</button>
+        <button class="btn-sm btn-danger" onclick="eliminarCanal('${c.id}')" style="padding:5px 9px">🗑</button>
+      </span>
+    </div>`).join("");
+}
+
+function renderCategoriasConfig() {
+  const pe = document.getElementById("categorias-config");
+  if (!pe) return;
+  if (!categoriasList.length) { pe.innerHTML='<div class="loading">Sin categorías cargadas</div>'; return; }
+  pe.innerHTML = categoriasList.map(c=>`
+    <div class="config-item">
+      <span class="config-item-label">${c.nombre} <span class="badge badge-ok" style="background:rgba(74,184,240,.12);color:var(--accent2);margin-left:6px">${c.prefijo}</span></span>
+      <span style="display:flex;gap:6px">
+        <button class="btn-sm btn-secondary" onclick="editarCategoria('${c.id}')" style="padding:5px 9px">✎</button>
+        <button class="btn-sm btn-danger" onclick="eliminarCategoria('${c.id}')" style="padding:5px 9px">🗑</button>
+      </span>
+    </div>`).join("");
+}
+
+window.agregarCanal = async function() {
+  const nombreEl = document.getElementById("nuevo-canal-nombre");
+  const prefEl   = document.getElementById("nuevo-canal-prefijo");
+  const nombre = nombreEl.value.trim();
+  let prefijo  = prefEl.value.trim().toUpperCase();
+  if (!nombre) { toast("Poné un nombre para el canal","error"); return; }
+  if (!prefijo) prefijo = nombre.substring(0,3).toUpperCase();
+  if (canalesList.some(c=>c.nombre.toLowerCase()===nombre.toLowerCase())) { toast("Ese canal ya existe","error"); return; }
+  try {
+    await addDoc(collection(db,"canales"),{nombre,prefijo});
+    nombreEl.value=""; prefEl.value="";
+    toast("✓ Canal agregado","success");
+  } catch(e) { toast("Error: "+e.message,"error"); }
+}
+
+window.editarCanal = async function(id) {
+  const c = canalesList.find(x=>x.id===id); if (!c) return;
+  const nuevoNombre = prompt("Nombre del canal:", c.nombre);
+  if (nuevoNombre===null) return;
+  const nuevoPrefijo = prompt("Prefijo (para el N° de orden):", c.prefijo);
+  if (nuevoPrefijo===null) return;
+  try {
+    await updateDoc(doc(db,"canales",id),{nombre:(nuevoNombre.trim()||c.nombre), prefijo:(nuevoPrefijo.trim()||c.prefijo).toUpperCase()});
+    toast("✓ Canal actualizado","success");
+  } catch(e) { toast("Error: "+e.message,"error"); }
+}
+
+window.eliminarCanal = async function(id) {
+  const c = canalesList.find(x=>x.id===id); if (!c) return;
+  if (!confirm(`¿Eliminar el canal "${c.nombre}"? Las ventas ya registradas no se modifican.`)) return;
+  try { await deleteDoc(doc(db,"canales",id)); toast("🗑 Canal eliminado","success"); }
+  catch(e) { toast("Error: "+e.message,"error"); }
+}
+
+window.agregarCategoria = async function() {
+  const nombreEl = document.getElementById("nueva-cat-nombre");
+  const prefEl   = document.getElementById("nueva-cat-prefijo");
+  const nombre = nombreEl.value.trim();
+  let prefijo  = prefEl.value.trim().toUpperCase();
+  if (!nombre) { toast("Poné un nombre para la categoría","error"); return; }
+  if (!prefijo) prefijo = nombre.substring(0,3).toUpperCase();
+  if (categoriasList.some(c=>c.nombre.toLowerCase()===nombre.toLowerCase())) { toast("Esa categoría ya existe","error"); return; }
+  try {
+    await addDoc(collection(db,"categorias"),{nombre,prefijo});
+    nombreEl.value=""; prefEl.value="";
+    toast("✓ Categoría agregada","success");
+  } catch(e) { toast("Error: "+e.message,"error"); }
+}
+
+window.editarCategoria = async function(id) {
+  const c = categoriasList.find(x=>x.id===id); if (!c) return;
+  const nuevoNombre = prompt("Nombre de la categoría:", c.nombre);
+  if (nuevoNombre===null) return;
+  const nuevoPrefijo = prompt("Prefijo (para el código ART):", c.prefijo);
+  if (nuevoPrefijo===null) return;
+  try {
+    await updateDoc(doc(db,"categorias",id),{nombre:(nuevoNombre.trim()||c.nombre), prefijo:(nuevoPrefijo.trim()||c.prefijo).toUpperCase()});
+    toast("✓ Categoría actualizada","success");
+  } catch(e) { toast("Error: "+e.message,"error"); }
+}
+
+window.eliminarCategoria = async function(id) {
+  const c = categoriasList.find(x=>x.id===id); if (!c) return;
+  if (!confirm(`¿Eliminar la categoría "${c.nombre}"? Los productos ya cargados no se modifican.`)) return;
+  try { await deleteDoc(doc(db,"categorias",id)); toast("🗑 Categoría eliminada","success"); }
+  catch(e) { toast("Error: "+e.message,"error"); }
 }
 
 document.getElementById("ped-canal")?.addEventListener("change", actualizarNroOrden);
@@ -270,7 +423,60 @@ function driveUrlToImg(url) {
   if (!url) return "";
   const m = url.match(/\/d\/([^/]+)/);
   if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w400`;
-  return url;
+  return url; // las URLs de Cloudinary ya son directas, se devuelven tal cual
+}
+
+// ── SUBIDA DE FOTOS A CLOUDINARY ─────────────────────────
+async function subirACloudinary(file, onProgress) {
+  const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
+  const fd  = new FormData();
+  fd.append("file", file);
+  fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+  fd.append("folder", "bendito-mate-ba");
+  const res = await fetch(url, { method: "POST", body: fd });
+  if (!res.ok) {
+    const err = await res.json().catch(()=>({}));
+    throw new Error(err.error?.message || "No se pudo subir la imagen");
+  }
+  const data = await res.json();
+  return data.secure_url;
+}
+
+window.subirFotoCarga = async function(ev) {
+  const file = ev.target.files?.[0];
+  if (!file) return;
+  const wrapper = document.getElementById("foto-preview-carga");
+  const img     = document.getElementById("foto-preview-img");
+  const input   = document.getElementById("c-foto");
+  img.src = URL.createObjectURL(file);
+  wrapper.style.display = "block";
+  toast("Subiendo foto...", "success");
+  try {
+    const url = await subirACloudinary(file);
+    input.value = url;
+    img.src = url;
+    toast("✓ Foto subida", "success");
+  } catch (e) {
+    toast("Error al subir foto: " + e.message, "error");
+  }
+}
+
+window.subirFotoEditar = async function(ev) {
+  const file = ev.target.files?.[0];
+  if (!file) return;
+  const img   = document.getElementById("foto-preview-edit");
+  const input = document.getElementById("edit-foto");
+  img.src = URL.createObjectURL(file);
+  img.style.display = "block";
+  toast("Subiendo foto...", "success");
+  try {
+    const url = await subirACloudinary(file);
+    input.value = url;
+    img.src = url;
+    toast("✓ Foto subida", "success");
+  } catch (e) {
+    toast("Error al subir foto: " + e.message, "error");
+  }
 }
 
 window.buscarProductoLive = function() {
@@ -739,7 +945,7 @@ window.generarCodigo = async function() {
     document.getElementById("codigo-manual-field").style.display="none";
     return;
   }
-  const pref=PREFIJOS[cat]||cat.substring(0,3).toUpperCase();
+  const pref=(categoriasList.find(c=>c.nombre===cat)?.prefijo)||cat.substring(0,3).toUpperCase();
   const colorCod=color?"-"+color.substring(0,3).toUpperCase().replace(/\s/g,""):"";
   const mismosNombre=productos.filter(p=>p.nombre&&p.nombre.toUpperCase().includes(nombre.toUpperCase().substring(0,8)));
   let numero=1;
@@ -809,6 +1015,99 @@ window.guardarProducto = async function() {
   finally{btn.textContent=orig;btn.disabled=false;}
 }
 
+// ── IMPORTAR PRODUCTOS DESDE EXCEL ──────────────────────
+function normalizarClave(k) {
+  return (k||"").toString().trim().toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"") // saca tildes
+    .replace(/[^a-z0-9]/g,"");
+}
+
+// Alias aceptados por columna (todo normalizado: sin espacios, tildes ni símbolos)
+const ALIAS_COLUMNAS = {
+  art:            ["art","codigo","codigoart","sku"],
+  nombre:         ["nombre","producto","nombreproducto"],
+  categoria:      ["categoria","cat"],
+  subcategoria:   ["subcategoria","sub","subcat"],
+  color:          ["color","variante"],
+  stock:          ["stock","cantidad","stockinicial"],
+  costo:          ["costo","preciocosto"],
+  precio_venta:   ["precioventa","precio","preciodeventa","pventa"],
+  foto:           ["foto","imagen","link","url","fotourl"]
+};
+
+function mapearFila(fila) {
+  const out = {};
+  const clavesFila = Object.keys(fila);
+  for (const [campo, alias] of Object.entries(ALIAS_COLUMNAS)) {
+    const clave = clavesFila.find(k => alias.includes(normalizarClave(k)));
+    out[campo] = clave !== undefined ? fila[clave] : "";
+  }
+  return out;
+}
+
+window.importarExcel = async function(ev) {
+  const file = ev.target.files?.[0];
+  if (!file) return;
+  const resultado = document.getElementById("import-excel-resultado");
+  resultado.style.display = "block";
+  resultado.textContent = "Leyendo archivo...";
+
+  try {
+    const buf  = await file.arrayBuffer();
+    const wb   = XLSX.read(buf, { type: "array" });
+    const hoja = wb.Sheets[wb.SheetNames[0]];
+    const filas = XLSX.utils.sheet_to_json(hoja, { defval: "" });
+
+    if (!filas.length) { resultado.textContent = "El archivo no tiene filas de datos."; return; }
+
+    let creados = 0, actualizados = 0, saltados = 0;
+
+    for (const filaCruda of filas) {
+      const f = mapearFila(filaCruda);
+      const art    = (f.art || "").toString().trim().toUpperCase();
+      const nombre = (f.nombre || "").toString().trim();
+      if (!art || !nombre) { saltados++; continue; }
+
+      const stock = parseInt(f.stock) || 0;
+      const costo = parseFloat(f.costo) || 0;
+      const precio_venta = parseFloat(f.precio_venta) || 0;
+      const foto = (f.foto || "").toString().trim();
+      const categoria = (f.categoria || "").toString().trim();
+      const subcategoria = (f.subcategoria || "").toString().trim();
+      const color = (f.color || "").toString().trim();
+
+      resultado.textContent = `Importando ${creados+actualizados+saltados+1} de ${filas.length}...`;
+
+      const existente = productos.find(p => (p.art||"").toUpperCase() === art);
+      if (existente) {
+        await updateDoc(doc(db,"productos",existente.id), {
+          nombre: nombre.toUpperCase(),
+          categoria: categoria || existente.categoria || "",
+          subcategoria: subcategoria || existente.subcategoria || "",
+          color: color || existente.color || "",
+          stock, costo, precio_venta,
+          foto: foto || existente.foto || ""
+        });
+        actualizados++;
+      } else {
+        await addDoc(collection(db,"productos"), {
+          art, nombre: nombre.toUpperCase(), categoria, subcategoria, color,
+          stock, costo, precio_venta, foto, fecha_alta: serverTimestamp()
+        });
+        creados++;
+      }
+    }
+
+    resultado.textContent = `✓ Listo: ${creados} creados, ${actualizados} actualizados${saltados?`, ${saltados} filas sin ART/Nombre saltadas`:""}.`;
+    toast("✓ Importación desde Excel completada", "success");
+  } catch (e) {
+    resultado.textContent = "Error al importar: " + e.message;
+    toast("Error al importar: " + e.message, "error");
+  } finally {
+    ev.target.value = "";
+  }
+}
+
 // ── HISTORIAL ───────────────────────────────────────────
 function renderHistorialPage() {
   const el=document.getElementById("historial-list");
@@ -852,6 +1151,89 @@ function renderHistorialPage() {
   if(hCanal)hCanal.textContent=top?top[0]:"—";
 
   renderHistorial(ventas);
+}
+
+// ── RESUMEN DEL NEGOCIO ─────────────────────────────────
+function fechaDeVenta(v) {
+  if (v.fecha?.toDate) return v.fecha.toDate();
+  return new Date(v.fecha || 0);
+}
+
+function totalDeVentas(lista) {
+  const ids = new Set(lista.map(v => v.id));
+  const det = detalleVentas.filter(d => ids.has(d.id_venta));
+  return det.reduce((s,d) => s + parseFloat(d.precio_unitario||0)*parseInt(d.cantidad||1), 0);
+}
+
+function renderResumen() {
+  const el = document.getElementById("page-resumen");
+  if (!el) return;
+
+  const ahora = new Date();
+  const hace7 = new Date(ahora); hace7.setDate(hace7.getDate()-7);
+  const hace30 = new Date(ahora); hace30.setDate(hace30.getDate()-30);
+
+  const v7  = ventas.filter(v => fechaDeVenta(v) >= hace7);
+  const v30 = ventas.filter(v => fechaDeVenta(v) >= hace30);
+
+  document.getElementById("r-7d").textContent  = "$"+totalDeVentas(v7).toLocaleString("es-AR",{maximumFractionDigits:0});
+  document.getElementById("r-7d-cant").textContent  = v7.length+" pedido"+(v7.length!==1?"s":"");
+  document.getElementById("r-30d").textContent = "$"+totalDeVentas(v30).toLocaleString("es-AR",{maximumFractionDigits:0});
+  document.getElementById("r-30d-cant").textContent = v30.length+" pedido"+(v30.length!==1?"s":"");
+
+  // Valor de inventario
+  let valorCosto=0, valorVenta=0, unidades=0;
+  productos.forEach(p=>{
+    const s=parseInt(p.stock||0);
+    valorCosto += s*parseFloat(p.costo||0);
+    valorVenta += s*parseFloat(p.precio_venta||0);
+    unidades   += s;
+  });
+  document.getElementById("r-valor-costo").textContent = "$"+valorCosto.toLocaleString("es-AR",{maximumFractionDigits:0});
+  document.getElementById("r-valor-venta").textContent = "$"+valorVenta.toLocaleString("es-AR",{maximumFractionDigits:0});
+  document.getElementById("r-unidades").textContent = unidades;
+
+  // Top productos más vendidos (histórico)
+  const cant = {};
+  detalleVentas.filter(d => (d.art||"").toUpperCase()!=="ADICIONAL").forEach(d=>{
+    const key=(d.art||d.nombre_prod||"—").toUpperCase();
+    cant[key]=(cant[key]||0)+parseInt(d.cantidad||1);
+  });
+  const top = Object.entries(cant).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const topEl = document.getElementById("r-top-productos");
+  if (topEl) {
+    if (!top.length) topEl.innerHTML='<div class="loading">Todavía no hay ventas registradas</div>';
+    else topEl.innerHTML = top.map(([art,c],i)=>{
+      const prod = productos.find(p=>(p.art||"").toUpperCase()===art);
+      const nombre = prod?.nombre || art;
+      return `<div class="config-item"><span class="config-item-label">${i+1}. ${nombre}</span><span class="badge badge-ok">${c} vendidos</span></div>`;
+    }).join("");
+  }
+
+  // Ventas por canal (histórico)
+  const porCanal={};
+  ventas.forEach(v=>{ porCanal[v.canal||"—"]=(porCanal[v.canal||"—"]||0)+1; });
+  const totalCant = ventas.length||1;
+  const canalesEl = document.getElementById("r-canales");
+  if (canalesEl) {
+    const entradas = Object.entries(porCanal).sort((a,b)=>b[1]-a[1]);
+    if (!entradas.length) canalesEl.innerHTML='<div class="loading">Sin ventas registradas</div>';
+    else canalesEl.innerHTML = entradas.map(([canal,c])=>{
+      const pct=((c/totalCant)*100).toFixed(0);
+      return `<div class="config-item"><span class="config-item-label">${canal}</span><span class="config-item-value">${c} · ${pct}%</span></div>`;
+    }).join("");
+  }
+
+  // Stock crítico
+  const criticos = productos.filter(p=>parseInt(p.stock||0)<=2).sort((a,b)=>parseInt(a.stock||0)-parseInt(b.stock||0));
+  const critEl = document.getElementById("r-stock-critico");
+  if (critEl) {
+    if (!criticos.length) critEl.innerHTML='<div class="loading">Sin alertas de stock 🎉</div>';
+    else critEl.innerHTML = criticos.slice(0,10).map(p=>{
+      const s=parseInt(p.stock||0);
+      return `<div class="config-item"><span class="config-item-label">${p.nombre}</span><span class="badge ${s<=0?"badge-danger":"badge-warn"}">${s} unid.</span></div>`;
+    }).join("");
+  }
 }
 
 function renderHistorial(data) {
@@ -919,13 +1301,7 @@ window.filtrarHistorial = function() {
 }
 
 // ── CONFIG ──────────────────────────────────────────────
-function renderConfig() {
-  const ce=document.getElementById("canales-config");
-  if(ce)ce.innerHTML=Object.entries(CANALES).map(([c,p])=>`
-    <div class="config-item"><span class="config-item-label">${c}</span><span class="badge badge-ok">${p}</span></div>`).join("");
-  const pe=document.getElementById("prefijos-config");
-  if(pe)pe.innerHTML=Object.entries(PREFIJOS).map(([c,p])=>`
-    <div class="config-item"><span class="config-item-label">${c}</span><span class="badge badge-ok" style="background:rgba(74,184,240,.12);color:var(--accent2)">${p}</span></div>`).join("");
+function actualizarUltimaSync() {
   const ls=document.getElementById("last-sync");
   if(ls)ls.textContent=new Date().toLocaleTimeString("es-AR");
 }
@@ -949,6 +1325,10 @@ cargarDatos();
     <button class="sidebar-item active" onclick="navTo('pedidos',this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
       Pedidos
+    </button>
+    <button class="sidebar-item" onclick="navTo('resumen',this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-5"/></svg>
+      Resumen
     </button>
     <button class="sidebar-item" onclick="navTo('stock',this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/><path d="M16 3H8l-2 4h12l-2-4z"/></svg>
@@ -1033,6 +1413,34 @@ cargarDatos();
   <button class="btn btn-secondary" onclick="limpiarCarrito()">Limpiar carrito</button>
 </div>
 
+<!-- PAGE: RESUMEN -->
+<div class="page" id="page-resumen">
+  <div class="topbar-mobile"><div><div class="topbar-title">Resumen</div></div><div class="topbar-avatar">📊</div></div>
+  <div class="page-header"><h1><span class="accent">Resumen</span> del negocio</h1><p>Una foto general de cómo viene todo</p></div>
+  <div class="metrics">
+    <div class="metric"><div class="metric-label">Ventas últimos 7 días</div><div class="metric-value" id="r-7d">$0</div><div class="metric-delta" id="r-7d-cant">0 pedidos</div></div>
+    <div class="metric"><div class="metric-label">Ventas últimos 30 días</div><div class="metric-value" id="r-30d">$0</div><div class="metric-delta" id="r-30d-cant">0 pedidos</div></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Valor del inventario</div>
+    <div class="config-item"><span class="config-item-label">A precio de costo</span><span class="config-item-value" id="r-valor-costo">$0</span></div>
+    <div class="config-item"><span class="config-item-label">A precio de venta</span><span class="config-item-value" id="r-valor-venta">$0</span></div>
+    <div class="config-item"><span class="config-item-label">Unidades en stock</span><span class="config-item-value" id="r-unidades">0</span></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Top 5 productos más vendidos</div>
+    <div id="r-top-productos"><div class="loading">Cargando...</div></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Ventas por canal (histórico)</div>
+    <div id="r-canales"><div class="loading">Cargando...</div></div>
+  </div>
+  <div class="card">
+    <div class="card-title">⚠️ Stock crítico</div>
+    <div id="r-stock-critico"><div class="loading">Cargando...</div></div>
+  </div>
+</div>
+
 <!-- PAGE: STOCK -->
 <div class="page" id="page-stock">
   <div class="topbar-mobile"><div><div class="topbar-title">Stock</div></div><div class="topbar-avatar">📦</div></div>
@@ -1107,12 +1515,13 @@ cargarDatos();
     </div>
     <div class="divider"></div>
     <div class="field">
-      <label>📸 Foto (link de Google Drive)</label>
-      <input type="text" id="c-foto" placeholder="Pegá el link público de Drive..." oninput="previewFoto()" autocomplete="off">
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">Drive → clic derecho foto → "Compartir" → "Cualquiera con el enlace"</div>
+      <label>📸 Foto del producto</label>
+      <input type="file" accept="image/*" capture="environment" id="c-foto-file" onchange="subirFotoCarga(event)">
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">Sacá la foto o elegila de la galería — se sube automáticamente</div>
       <div id="foto-preview-carga" style="width:100%;margin-top:10px;border-radius:var(--radius-sm);overflow:hidden;display:none">
         <img id="foto-preview-img" style="width:100%;aspect-ratio:1;object-fit:cover;background:var(--card2)" alt="Preview">
       </div>
+      <input type="text" id="c-foto" placeholder="...o pegá directamente un link de imagen" oninput="previewFoto()" autocomplete="off" style="margin-top:8px">
     </div>
   </div>
   <button class="btn btn-primary" onclick="guardarProducto()" id="btn-guardar-prod">GUARDAR ARTÍCULO</button>
@@ -1128,8 +1537,38 @@ cargarDatos();
     <div class="config-item"><span class="config-item-label">Proyecto</span><span class="config-item-value">bendito-mate-ba</span></div>
     <div class="config-item"><span class="config-item-label">Última sync</span><span class="config-item-value" id="last-sync">En tiempo real</span></div>
   </div>
-  <div class="card"><div class="card-title">Canales activos</div><div id="canales-config"></div></div>
-  <div class="card"><div class="card-title">Prefijos de categoría</div><div id="prefijos-config"></div></div>
+  <div class="card">
+    <div class="card-title">Canales de venta</div>
+    <div id="canales-config"></div>
+    <div class="divider"></div>
+    <div class="row row-2">
+      <div class="field" style="margin-bottom:8px"><label>Nombre</label><input type="text" id="nuevo-canal-nombre" placeholder="Ej: Feria" autocomplete="off"></div>
+      <div class="field" style="margin-bottom:8px"><label>Prefijo orden</label><input type="text" id="nuevo-canal-prefijo" placeholder="Ej: FER" style="text-transform:uppercase" autocomplete="off"></div>
+    </div>
+    <button class="btn btn-secondary" onclick="agregarCanal()">＋ Agregar canal</button>
+  </div>
+  <div class="card">
+    <div class="card-title">Categorías de producto</div>
+    <div id="categorias-config"></div>
+    <div class="divider"></div>
+    <div class="row row-2">
+      <div class="field" style="margin-bottom:8px"><label>Nombre</label><input type="text" id="nueva-cat-nombre" placeholder="Ej: Bombillas" autocomplete="off"></div>
+      <div class="field" style="margin-bottom:8px"><label>Prefijo código</label><input type="text" id="nueva-cat-prefijo" placeholder="Ej: BOM" style="text-transform:uppercase" autocomplete="off"></div>
+    </div>
+    <button class="btn btn-secondary" onclick="agregarCategoria()">＋ Agregar categoría</button>
+  </div>
+  <div class="card">
+    <div class="card-title">Importar productos desde Excel</div>
+    <div class="field">
+      <label>Archivo (.xlsx, .xls o .csv)</label>
+      <input type="file" accept=".xlsx,.xls,.csv" id="import-excel-file" onchange="importarExcel(event)">
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+      Columnas reconocidas (no hace falta que estén todas ni en orden): <b>ART</b>, <b>Nombre</b>, <b>Categoría</b>, <b>Subcategoría</b>, <b>Color</b>, <b>Stock</b>, <b>Costo</b>, <b>Precio venta</b>, <b>Foto</b> (link).<br>
+      Si el ART ya existe, se actualiza ese producto; si no existe, se crea uno nuevo.
+    </div>
+    <div id="import-excel-resultado" style="display:none;font-size:13px;font-weight:600;background:var(--card2);border-radius:var(--radius-sm);padding:12px"></div>
+  </div>
 </div>
 
 <!-- MODALES -->
@@ -1193,9 +1632,10 @@ cargarDatos();
     <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Stock final = actual + unidades a sumar</div>
     <div class="divider"></div>
     <div class="field">
-      <label>📸 Foto (link de Drive)</label>
-      <input type="text" id="edit-foto" placeholder="Link público de Google Drive..." autocomplete="off" oninput="previewFotoEdit()">
+      <label>📸 Foto del producto</label>
+      <input type="file" accept="image/*" capture="environment" id="edit-foto-file" onchange="subirFotoEditar(event)">
       <img id="foto-preview-edit" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:var(--radius-sm);margin-top:8px;display:none" alt="Preview">
+      <input type="text" id="edit-foto" placeholder="...o pegá directamente un link de imagen" autocomplete="off" oninput="previewFotoEdit()" style="margin-top:8px">
     </div>
     <button class="btn btn-primary" onclick="guardarEdicionProducto()">GUARDAR CAMBIOS</button>
     <div style="height:8px"></div>
@@ -1220,6 +1660,10 @@ cargarDatos();
   <button class="nav-btn active" onclick="navTo('pedidos',this)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
     Pedidos<div class="nav-dot"></div>
+  </button>
+  <button class="nav-btn" onclick="navTo('resumen',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-5"/></svg>
+    Resumen<div class="nav-dot"></div>
   </button>
   <button class="nav-btn" onclick="navTo('stock',this)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/><path d="M16 3H8l-2 4h12l-2-4z"/></svg>
