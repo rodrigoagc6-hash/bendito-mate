@@ -182,6 +182,11 @@ const db  = getFirestore(app);
 const CLOUDINARY_CLOUD_NAME    = "euznmg7q";
 const CLOUDINARY_UPLOAD_PRESET = "bendito_mate_unsigned"; // ⚠️ Creá este preset (unsigned) en Cloudinary > Settings > Upload
 
+const ESTADOS_VENTA = ["Pendiente de grabado","Pendiente de compra","Pendiente de entrega","Entregado"];
+function badgeEstado(estado) {
+  const map={"Pendiente de grabado":"badge-warn","Pendiente de compra":"badge-danger","Pendiente de entrega":"badge-warn","Entregado":"badge-ok"};
+  return map[estado]||"badge-warn";
+}
 const CANALES_DEFAULT    = [["Instagram","IG"],["WhatsApp","WA"],["Tienda Nube","TN"],["Local","LOC"]];
 const INTERIORES_DEFAULT = ["Acero","PVC","Calabaza","Algarrobo","Madera"];
 const CATEGORIAS_DEFAULT = [["Mates","MAT"],["Stanley","STA"],["Vasos","VAS"],["Accesorios","ACC"],["Combos","COM"],["Otros","OTR"]];
@@ -194,6 +199,7 @@ let carrito        = [];
 let adicionales    = [];
 let productoActual = null;
 let categoriaActiva = "Todos";
+let estadoActivo = "Todos";
 let dropdownIndex  = -1;
 let canalesList     = [];
 let categoriasList  = [];
@@ -727,6 +733,7 @@ window.abrirTicket = function() {
     <div style="font-size:13px;color:var(--text2);text-align:center">${metodo}</div>`;
   document.getElementById("modal-ticket-titulo").textContent="Confirmar venta";
   document.getElementById("btn-confirmar-venta").style.display="block";
+  document.getElementById("detalle-estado-wrap").style.display="none";
   document.getElementById("modal-ticket").classList.add("open");
 }
 
@@ -744,6 +751,7 @@ window.confirmarVenta = async function() {
     btn.textContent="Guardando..."; btn.disabled=true;
 
     // 1. Guardar venta
+    const tieneGrabado = adicionales.some(a=>a.nombre==="Grabado láser");
     const ventaRef = await addDoc(collection(db,"ventas"),{
       fecha: serverTimestamp(),
       cliente: document.getElementById("ped-cliente").value,
@@ -752,7 +760,8 @@ window.confirmarVenta = async function() {
       total: parseFloat(total.toFixed(2)),
       metodo_pago: metodo,
       nota: document.getElementById("ped-nota").value,
-      adicionales: adicionales.map(a=>a.nombre+(a.detalle?" - "+a.detalle:"")).join(" | ")
+      adicionales: adicionales.map(a=>a.nombre+(a.detalle?" - "+a.detalle:"")).join(" | "),
+      estado: tieneGrabado ? "Pendiente de grabado" : "Pendiente de entrega"
     });
 
     // 2. Guardar detalle y descontar stock (paralelo)
@@ -1257,7 +1266,7 @@ function renderHistorialPage() {
   const hCanal=document.getElementById("h-canal");
   if(hCanal)hCanal.textContent=top?top[0]:"—";
 
-  renderHistorial(ventas);
+  aplicarFiltrosHistorial();
 }
 
 // ── RESUMEN DEL NEGOCIO ─────────────────────────────────
@@ -1299,6 +1308,20 @@ function renderResumen() {
   document.getElementById("r-valor-costo").textContent = "$"+valorCosto.toLocaleString("es-AR",{maximumFractionDigits:0});
   document.getElementById("r-valor-venta").textContent = "$"+valorVenta.toLocaleString("es-AR",{maximumFractionDigits:0});
   document.getElementById("r-unidades").textContent = unidades;
+
+  // Pedidos pendientes por estado
+  const pendEl = document.getElementById("r-pendientes");
+  if (pendEl) {
+    const pendientes = ventas.filter(v=>(v.estado||"Pendiente de entrega")!=="Entregado");
+    if (!pendientes.length) pendEl.innerHTML='<div class="loading">No hay pedidos pendientes 🎉</div>';
+    else {
+      const porEstado={};
+      pendientes.forEach(v=>{ const e=v.estado||"Pendiente de entrega"; porEstado[e]=(porEstado[e]||0)+1; });
+      pendEl.innerHTML = ESTADOS_VENTA.filter(e=>e!=="Entregado" && porEstado[e]).map(e=>
+        `<div class="config-item"><span class="config-item-label">${e}</span><span class="badge ${badgeEstado(e)}">${porEstado[e]}</span></div>`
+      ).join("");
+    }
+  }
 
   // Top productos más vendidos (histórico)
   const cant = {};
@@ -1346,6 +1369,13 @@ function renderResumen() {
 function renderHistorial(data) {
   const el=document.getElementById("historial-list");
   if(!el||!data)return;
+  const tabsEl=document.getElementById("historial-estado-tabs");
+  if (tabsEl) {
+    const estados=["Todos",...ESTADOS_VENTA];
+    tabsEl.innerHTML=estados.map(e=>
+      `<button class="btn-sm ${e===estadoActivo?"btn-accent2":"btn-secondary"}" onclick="filtrarEstado('${e}')" style="white-space:nowrap">${e}</button>`
+    ).join("");
+  }
   if(!data.length){el.innerHTML='<div class="loading">Sin ventas registradas</div>';return;}
   el.innerHTML=data.map(v=>`
     <div class="venta-item" onclick="verDetalleVenta('${v.id}')">
@@ -1355,11 +1385,17 @@ function renderHistorial(data) {
       </div>
       <div class="venta-info">
         <span class="venta-canal">${v.canal||"—"}</span>${v.cliente||"—"} · ${v.metodo_pago||""}
+        <span class="badge ${badgeEstado(v.estado)}" style="margin-left:6px">${v.estado||"Pendiente de entrega"}</span>
         ${v.nota?`<br><span style="color:var(--text3);font-size:11px">📝 ${v.nota}</span>`:""}
         <br><span style="color:var(--text3);font-size:11px">${v.fecha?.toDate?.().toLocaleString("es-AR")||v.fecha||""}</span>
         <span style="float:right;font-size:11px;color:var(--accent2)">ver detalle ›</span>
       </div>
     </div>`).join("");
+}
+
+window.filtrarEstado = function(estado) {
+  estadoActivo = estado;
+  aplicarFiltrosHistorial();
 }
 
 window.verDetalleVenta = function(idVenta) {
@@ -1382,29 +1418,51 @@ window.verDetalleVenta = function(idVenta) {
     ${venta.nota?`<div style="font-size:12px;color:var(--text2);margin-top:8px">📝 ${venta.nota}</div>`:""}`;
   document.getElementById("modal-ticket-titulo").textContent="Detalle del pedido";
   document.getElementById("btn-confirmar-venta").style.display="none";
+  window._detalleVentaId=idVenta;
+  const estadoSel=document.getElementById("detalle-estado-select");
+  estadoSel.innerHTML=ESTADOS_VENTA.map(e=>`<option value="${e}">${e}</option>`).join("");
+  estadoSel.value=venta.estado||"Pendiente de entrega";
+  document.getElementById("detalle-estado-wrap").style.display="block";
   document.getElementById("modal-ticket").classList.add("open");
 }
 
+window.cambiarEstadoVenta = async function(nuevoEstado) {
+  const id=window._detalleVentaId;
+  if(!id)return;
+  try {
+    await updateDoc(doc(db,"ventas",id),{estado:nuevoEstado});
+    toast(`✓ Estado: ${nuevoEstado}`,"success");
+  } catch(e) { toast("Error: "+e.message,"error"); }
+}
+
+let periodoActivo = "hoy";
+
+function aplicarFiltrosHistorial() {
+  const ahora=new Date();
+  let fil=ventas;
+  if(periodoActivo==="hoy"){const h=ahora.toISOString().slice(0,10);fil=fil.filter(v=>{const f=v.fecha?.toDate?.()?.toISOString?.().slice(0,10)||String(v.fecha||"").slice(0,10);return f===h;});}
+  else if(periodoActivo==="semana"){const ini=new Date(ahora);ini.setDate(ahora.getDate()-ahora.getDay());fil=fil.filter(v=>{const f=v.fecha?.toDate?.()?.getTime?.()||0;return f>=ini.getTime();});}
+  else if(periodoActivo==="mes"){const m=ahora.toISOString().slice(0,7);fil=fil.filter(v=>{const f=v.fecha?.toDate?.()?.toISOString?.().slice(0,7)||String(v.fecha||"").slice(0,7);return f===m;});}
+
+  const q=document.getElementById("hist-busq")?.value.toLowerCase()||"";
+  if (q) fil=fil.filter(v=>(v.cliente||"").toLowerCase().includes(q)||(v.nro_orden||"").toLowerCase().includes(q)||(v.canal||"").toLowerCase().includes(q));
+
+  if (estadoActivo!=="Todos") fil=fil.filter(v=>(v.estado||"Pendiente de entrega")===estadoActivo);
+
+  renderHistorial(fil);
+}
+
 window.filtrarFecha = function(periodo) {
+  periodoActivo = periodo;
   ["hoy","semana","mes","todo"].forEach(p=>{
     const b=document.getElementById(`filtro-${p}`);
     if(b)b.className=p===periodo?"btn-sm btn-accent2":"btn-sm btn-secondary";
   });
-  const ahora=new Date();
-  let fil=ventas;
-  if(periodo==="hoy"){const h=ahora.toISOString().slice(0,10);fil=ventas.filter(v=>{const f=v.fecha?.toDate?.()?.toISOString?.().slice(0,10)||String(v.fecha||"").slice(0,10);return f===h;});}
-  else if(periodo==="semana"){const ini=new Date(ahora);ini.setDate(ahora.getDate()-ahora.getDay());fil=ventas.filter(v=>{const f=v.fecha?.toDate?.()?.getTime?.()||0;return f>=ini.getTime();});}
-  else if(periodo==="mes"){const m=ahora.toISOString().slice(0,7);fil=ventas.filter(v=>{const f=v.fecha?.toDate?.()?.toISOString?.().slice(0,7)||String(v.fecha||"").slice(0,7);return f===m;});}
-  renderHistorial(fil);
+  aplicarFiltrosHistorial();
 }
 
 window.filtrarHistorial = function() {
-  const q=document.getElementById("hist-busq").value.toLowerCase();
-  renderHistorial(ventas.filter(v=>
-    (v.cliente||"").toLowerCase().includes(q)||
-    (v.nro_orden||"").toLowerCase().includes(q)||
-    (v.canal||"").toLowerCase().includes(q)
-  ));
+  aplicarFiltrosHistorial();
 }
 
 // ── CONFIG ──────────────────────────────────────────────
@@ -1535,6 +1593,10 @@ cargarDatos();
     <div class="config-item"><span class="config-item-label">Unidades en stock</span><span class="config-item-value" id="r-unidades">0</span></div>
   </div>
   <div class="card">
+    <div class="card-title">📋 Pedidos pendientes</div>
+    <div id="r-pendientes"><div class="loading">Cargando...</div></div>
+  </div>
+  <div class="card">
     <div class="card-title">Top 5 productos más vendidos</div>
     <div id="r-top-productos"><div class="loading">Cargando...</div></div>
   </div>
@@ -1579,6 +1641,7 @@ cargarDatos();
     <button class="btn-sm btn-secondary" id="filtro-mes" onclick="filtrarFecha('mes')" style="white-space:nowrap">Este mes</button>
     <button class="btn-sm btn-secondary" id="filtro-todo" onclick="filtrarFecha('todo')" style="white-space:nowrap">Todo</button>
   </div>
+  <div id="historial-estado-tabs" style="display:flex;gap:8px;margin-bottom:14px;overflow-x:auto;scrollbar-width:none"></div>
   <div id="historial-list"><div class="loading"><div class="spinner"></div>Cargando...</div></div>
 </div>
 
@@ -1694,6 +1757,10 @@ cargarDatos();
     <div class="modal-handle"></div>
     <div class="modal-title" id="modal-ticket-titulo">Confirmar venta</div>
     <div id="ticket-content"></div>
+    <div id="detalle-estado-wrap" style="display:none;margin-top:14px;padding-top:14px;border-top:1px dashed var(--border)">
+      <label style="font-size:12px;color:var(--text2);font-weight:600">Estado del pedido</label>
+      <select id="detalle-estado-select" onchange="cambiarEstadoVenta(this.value)" style="margin-top:6px"></select>
+    </div>
     <button class="btn btn-primary" id="btn-confirmar-venta" onclick="confirmarVenta()" style="margin-top:12px">✓ CONFIRMAR Y REGISTRAR</button>
     <div style="height:8px"></div>
     <button class="btn btn-secondary" onclick="cerrarModal('modal-ticket')">← Cerrar</button>
