@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -204,7 +207,7 @@ function toast(msg, tipo="success") {
   setTimeout(() => t.classList.remove("show"), 2800);
 }
 
-function cerrarModal(id) { document.getElementById(id).classList.remove("open"); }
+window.cerrarModal = function(id) { document.getElementById(id)?.classList.remove("open"); }
 
 // ── NAV ─────────────────────────────────────────────────
 window.navTo = function(page, btn) {
@@ -784,7 +787,7 @@ window.confirmarVenta = async function() {
     const orden=document.getElementById("ped-orden").value;
     const cliente=document.getElementById("ped-cliente").value||"";
     const resumen=carrito.map(it=>`• ${it.nombre}${it.color?" ("+it.color+")":""} x${it.cantidad}: $${(it.precio*it.cantidad).toLocaleString("es-AR")}`).join("\n")
-      +(adicionales.length?"\n"+adicionales.map(a=>`• ✦ ${a.nombre}: $${a.precio.toLocaleString("es-AR")}`).join("\n"):"")
+      +(adicionales.length?"\n"+adicionales.map(a=>`• ✦ ${a.nombre}${a.detalle?" — "+a.detalle:""}: $${a.precio.toLocaleString("es-AR")}`).join("\n"):"")
       +`\n\n*Total: $${total.toLocaleString("es-AR",{maximumFractionDigits:0})}* (${metodo})`;
 
     toast(`✓ Venta registrada — $${total.toLocaleString("es-AR",{maximumFractionDigits:0})}`, "success");
@@ -806,23 +809,41 @@ window.abrirModalAdicional = function() {
   document.getElementById("adic-detalle").value="";
   document.getElementById("adic-preview").style.display="none";
   document.getElementById("adic-nombre-field").style.display="none";
+  document.getElementById("adic-tipo").value="Grabado láser";
+  actualizarPrecioAdicional();
   document.getElementById("modal-adicional").classList.add("open");
 }
 window.actualizarPrecioAdicional = function() {
-  document.getElementById("adic-nombre-field").style.display=
-    document.getElementById("adic-tipo").value==="Otro"?"block":"none";
+  const tipo=document.getElementById("adic-tipo").value;
+  document.getElementById("adic-nombre-field").style.display = tipo==="Otro"?"block":"none";
+  const label=document.getElementById("adic-detalle-label");
+  const detalleInput=document.getElementById("adic-detalle");
+  if (tipo==="Grabado láser") {
+    label.textContent="Diseño / texto a grabar";
+    detalleInput.placeholder='Ej: "Feliz cumple Rodrigo" + iniciales RG';
+  } else if (tipo==="Personalización de caja") {
+    label.textContent="Detalle de la personalización";
+    detalleInput.placeholder="Qué va en la caja...";
+  } else if (tipo==="Envío") {
+    label.textContent="Dirección";
+    detalleInput.placeholder="Calle, número, localidad...";
+  } else {
+    label.textContent="Detalle (opcional)";
+    detalleInput.placeholder='Ej: "Rodrigo", dirección...';
+  }
   previewAdicional();
 }
 function previewAdicional() {
   const tipo=document.getElementById("adic-tipo").value;
   const nombre=tipo==="Otro"?(document.getElementById("adic-nombre-custom").value||"Adicional"):tipo;
   const precio=parseFloat(document.getElementById("adic-precio").value)||0;
+  const detalle=document.getElementById("adic-detalle").value;
   const prev=document.getElementById("adic-preview");
-  if(precio>0){
+  if(precio>0||detalle){
     prev.style.display="block";
     document.getElementById("adic-prev-nombre").textContent=nombre;
-    document.getElementById("adic-prev-detalle").textContent=document.getElementById("adic-detalle").value||"";
-    document.getElementById("adic-prev-precio").textContent="$"+precio.toLocaleString("es-AR");
+    document.getElementById("adic-prev-detalle").textContent=detalle||"";
+    document.getElementById("adic-prev-precio").textContent=precio>0?("$"+precio.toLocaleString("es-AR")):"Sin costo extra";
   } else { prev.style.display="none"; }
 }
 window.previewAdicional = previewAdicional;
@@ -831,7 +852,7 @@ window.confirmarAdicional = function() {
   const nombre=tipo==="Otro"?(document.getElementById("adic-nombre-custom").value||"Adicional"):tipo;
   const detalle=document.getElementById("adic-detalle").value;
   const precio=parseFloat(document.getElementById("adic-precio").value)||0;
-  if(precio<=0){toast("Ingresá un precio mayor a $0","error");return;}
+  if(precio<=0 && !detalle){toast("Ingresá un precio o el detalle del pedido","error");return;}
   adicionales.push({nombre,detalle,precio});
   cerrarModal("modal-adicional");
   renderAdicionales(); recalcularTotal();
@@ -1692,8 +1713,8 @@ cargarDatos();
       </select>
     </div>
     <div class="field" id="adic-nombre-field" style="display:none"><label>Descripción</label><input type="text" id="adic-nombre-custom" placeholder="Describí el adicional..." autocomplete="off"></div>
-    <div class="field"><label>Detalle (opcional)</label><input type="text" id="adic-detalle" placeholder='Ej: "Rodrigo", dirección...' autocomplete="off"></div>
-    <div class="field"><label>Precio $</label><input type="number" id="adic-precio" placeholder="0" min="0" oninput="previewAdicional()"></div>
+    <div class="field"><label id="adic-detalle-label">Detalle (opcional)</label><input type="text" id="adic-detalle" placeholder='Ej: "Rodrigo", dirección...' autocomplete="off"></div>
+    <div class="field"><label>Precio $</label><input type="number" id="adic-precio" placeholder="0 (si ya está incluido en el precio)" min="0" oninput="previewAdicional()"></div>
     <div id="adic-preview" style="display:none;background:var(--card2);border-radius:var(--radius-sm);padding:12px;margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div><div style="font-size:14px;font-weight:500" id="adic-prev-nombre"></div><div style="font-size:12px;color:var(--text2)" id="adic-prev-detalle"></div></div>
