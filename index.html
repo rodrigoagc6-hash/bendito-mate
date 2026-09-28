@@ -180,6 +180,7 @@ const CLOUDINARY_CLOUD_NAME    = "euznmg7q";
 const CLOUDINARY_UPLOAD_PRESET = "bendito_mate_unsigned"; // ⚠️ Creá este preset (unsigned) en Cloudinary > Settings > Upload
 
 const CANALES_DEFAULT    = [["Instagram","IG"],["WhatsApp","WA"],["Tienda Nube","TN"],["Local","LOC"]];
+const INTERIORES_DEFAULT = ["Acero","PVC","Calabaza","Algarrobo","Madera"];
 const CATEGORIAS_DEFAULT = [["Mates","MAT"],["Stanley","STA"],["Vasos","VAS"],["Accesorios","ACC"],["Combos","COM"],["Otros","OTR"]];
 
 // ── ESTADO GLOBAL ───────────────────────────────────────
@@ -193,7 +194,8 @@ let categoriaActiva = "Todos";
 let dropdownIndex  = -1;
 let canalesList     = [];
 let categoriasList  = [];
-let seedCanalesHecho = false, seedCategoriasHecho = false;
+let interioresList  = [];
+let seedCanalesHecho = false, seedCategoriasHecho = false, seedInterioresHecho = false;
 
 // ── TOAST ───────────────────────────────────────────────
 function toast(msg, tipo="success") {
@@ -216,7 +218,7 @@ window.navTo = function(page, btn) {
   if (page==="historial") renderHistorialPage();
   if (page==="pedidos")   renderMetricas();
   if (page==="resumen")   renderResumen();
-  if (page==="config")  { renderCanalesConfig(); renderCategoriasConfig(); actualizarUltimaSync(); }
+  if (page==="config")  { renderCanalesConfig(); renderCategoriasConfig(); renderInterioresConfig(); actualizarUltimaSync(); }
 }
 
 // ── CARGA INICIAL DE DATOS ──────────────────────────────
@@ -257,6 +259,14 @@ async function cargarDatos() {
     if (categoriasList.length === 0) seedCategoriasSiVacio();
     poblarSelectCategorias();
     renderCategoriasConfig();
+  });
+
+  // Tipos de interior (editables en Config)
+  onSnapshot(collection(db, "interiores"), snap => {
+    interioresList = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    if (interioresList.length === 0) seedInterioresSiVacio();
+    poblarSelectInterior();
+    renderInterioresConfig();
   });
 }
 
@@ -415,6 +425,62 @@ window.eliminarCategoria = async function(id) {
   catch(e) { toast("Error: "+e.message,"error"); }
 }
 
+// ── TIPOS DE INTERIOR (editables desde Config) ──────────
+async function seedInterioresSiVacio() {
+  if (seedInterioresHecho) return; seedInterioresHecho = true;
+  for (const nombre of INTERIORES_DEFAULT) await addDoc(collection(db,"interiores"),{nombre});
+}
+
+function poblarSelectInterior() {
+  ["c-interior","edit-interior"].forEach(id=>{
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">— Sin especificar —</option>'+interioresList.map(i=>`<option value="${i.nombre}">${i.nombre}</option>`).join("");
+    // si el producto tiene un interior que ya no está en la lista, se conserva igual
+    if (prev && !interioresList.some(i=>i.nombre===prev)) sel.innerHTML += `<option value="${prev}">${prev}</option>`;
+    sel.value = prev;
+  });
+}
+
+function renderInterioresConfig() {
+  const el = document.getElementById("interiores-config");
+  if (!el) return;
+  if (!interioresList.length) { el.innerHTML='<div class="loading">Sin tipos cargados</div>'; return; }
+  el.innerHTML = interioresList.map(i=>`
+    <div class="config-item">
+      <span class="config-item-label">${i.nombre}</span>
+      <span style="display:flex;gap:6px">
+        <button class="btn-sm btn-secondary" onclick="editarInterior('${i.id}')" style="padding:5px 9px">✎</button>
+        <button class="btn-sm btn-danger" onclick="eliminarInterior('${i.id}')" style="padding:5px 9px">🗑</button>
+      </span>
+    </div>`).join("");
+}
+
+window.agregarInterior = async function() {
+  const el = document.getElementById("nuevo-interior-nombre");
+  const nombre = el.value.trim();
+  if (!nombre) { toast("Poné un nombre","error"); return; }
+  if (interioresList.some(i=>i.nombre.toLowerCase()===nombre.toLowerCase())) { toast("Ya existe","error"); return; }
+  try { await addDoc(collection(db,"interiores"),{nombre}); el.value=""; toast("✓ Interior agregado","success"); }
+  catch(e) { toast("Error: "+e.message,"error"); }
+}
+
+window.editarInterior = async function(id) {
+  const i = interioresList.find(x=>x.id===id); if (!i) return;
+  const nuevo = prompt("Nombre del interior:", i.nombre);
+  if (nuevo===null || !nuevo.trim()) return;
+  try { await updateDoc(doc(db,"interiores",id),{nombre:nuevo.trim()}); toast("✓ Actualizado","success"); }
+  catch(e) { toast("Error: "+e.message,"error"); }
+}
+
+window.eliminarInterior = async function(id) {
+  const i = interioresList.find(x=>x.id===id); if (!i) return;
+  if (!confirm(`¿Eliminar "${i.nombre}"? Los productos que ya lo tienen no se modifican.`)) return;
+  try { await deleteDoc(doc(db,"interiores",id)); toast("🗑 Eliminado","success"); }
+  catch(e) { toast("Error: "+e.message,"error"); }
+}
+
 document.getElementById("ped-canal")?.addEventListener("change", actualizarNroOrden);
 document.getElementById("ped-metodo")?.addEventListener("change", recalcularTotal);
 
@@ -433,12 +499,20 @@ async function subirACloudinary(file, onProgress) {
   fd.append("file", file);
   fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
   fd.append("folder", "bendito-mate-ba");
-  const res = await fetch(url, { method: "POST", body: fd });
-  if (!res.ok) {
-    const err = await res.json().catch(()=>({}));
-    throw new Error(err.error?.message || "No se pudo subir la imagen");
+  let res;
+  try {
+    res = await fetch(url, { method: "POST", body: fd });
+  } catch (e) {
+    throw new Error("No hay conexión con Cloudinary. Revisá tu internet.");
   }
-  const data = await res.json();
+  const data = await res.json().catch(()=>({}));
+  if (!res.ok) {
+    const msg = data?.error?.message || `Error ${res.status}`;
+    if (/preset/i.test(msg)) {
+      throw new Error(`El preset "${CLOUDINARY_UPLOAD_PRESET}" no existe o no es "unsigned". Creálo en Cloudinary > Settings > Upload.`);
+    }
+    throw new Error(msg);
+  }
   return data.secure_url;
 }
 
@@ -489,7 +563,8 @@ window.buscarProductoLive = function() {
     (p.nombre||"").toLowerCase().includes(q) ||
     (p.art||"").toLowerCase().includes(q) ||
     (p.subcategoria||"").toLowerCase().includes(q) ||
-    (p.color||"").toLowerCase().includes(q)
+    (p.color||"").toLowerCase().includes(q) ||
+    (p.interior||"").toLowerCase().includes(q)
   ).slice(0,8);
 
   if (!res.length) {
@@ -509,7 +584,7 @@ window.buscarProductoLive = function() {
       <div class="dropdown-art">${p.art}</div>
       <div class="dropdown-info">
         <div class="dropdown-name">${p.nombre}</div>
-        <div class="dropdown-sub">${p.subcategoria||""} ${p.color?"· "+p.color:""}</div>
+        <div class="dropdown-sub">${p.subcategoria||""} ${p.interior?"· "+p.interior:""} ${p.color?"· "+p.color:""}</div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
         <span class="dropdown-price">$${parseFloat(p.precio_venta||0).toLocaleString("es-AR")}</span>
@@ -529,7 +604,7 @@ window.seleccionarProducto = function(idx) {
   document.getElementById("ped-art").value = p.nombre;
   document.getElementById("search-dropdown").style.display = "none";
   document.getElementById("pr-nombre").textContent = p.nombre;
-  document.getElementById("pr-info").textContent   = `${p.art} · ${p.subcategoria||""} ${p.color?"· "+p.color:""} · Stock: ${p.stock}`;
+  document.getElementById("pr-info").textContent   = `${p.art} · ${p.subcategoria||""} ${p.interior?"· Int. "+p.interior:""} ${p.color?"· "+p.color:""} · Stock: ${p.stock}`;
   document.getElementById("pr-precio").textContent = `$${parseFloat(p.precio_venta||0).toLocaleString("es-AR")}`;
   document.getElementById("pr-cantidad").value = 1;
   document.getElementById("prod-result").classList.add("visible");
@@ -792,7 +867,8 @@ function renderStock() {
     (p.art||"").toLowerCase().includes(busq)||
     (p.nombre||"").toLowerCase().includes(busq)||
     (p.subcategoria||"").toLowerCase().includes(busq)||
-    (p.color||"").toLowerCase().includes(busq)
+    (p.color||"").toLowerCase().includes(busq)||
+    (p.interior||"").toLowerCase().includes(busq)
   );
 
   if (!data.length){el.innerHTML='<div class="loading">Sin productos</div>';return;}
@@ -845,6 +921,7 @@ window.abrirVariantes = function(nombreBase) {
         ${img}${ph}
         <div class="variante-info">
           <div class="variante-color">${p.color||p.art||"—"}</div>
+          ${p.interior?`<div style="font-size:11px;color:var(--text2)">Interior: ${p.interior}</div>`:""}
           <div class="variante-stock"><span class="badge ${badge}">${s<=0?"Agotado":s+" unid."}</span></div>
           <div class="variante-price">$${parseFloat(p.precio_venta||0).toLocaleString("es-AR")}</div>
         </div>
@@ -862,6 +939,9 @@ window.editarDesdeVariante = function(firestoreId) {
   document.getElementById("edit-art-nuevo").value=p.art;
   document.getElementById("edit-nombre").value=p.nombre||"";
   document.getElementById("edit-sub").value=p.subcategoria||"";
+  poblarSelectInterior();
+  document.getElementById("edit-interior").value=p.interior||"";
+  if(p.interior&&document.getElementById("edit-interior").value!==p.interior){document.getElementById("edit-interior").innerHTML+=`<option value="${p.interior}">${p.interior}</option>`;document.getElementById("edit-interior").value=p.interior;}
   document.getElementById("edit-costo").value=p.costo||"";
   document.getElementById("edit-precio").value=p.precio_venta||"";
   document.getElementById("edit-stock").value=p.stock||"0";
@@ -899,13 +979,14 @@ window.guardarEdicionProducto = async function() {
   const artNuevo=document.getElementById("edit-art-nuevo").value.trim().toUpperCase();
   const nombre=document.getElementById("edit-nombre").value.trim().toUpperCase();
   const sub=document.getElementById("edit-sub").value.trim();
+  const interior=document.getElementById("edit-interior").value;
   const costo=parseFloat(document.getElementById("edit-costo").value)||0;
   const precio=parseFloat(document.getElementById("edit-precio").value)||0;
   const stock=(parseInt(document.getElementById("edit-stock").value)||0)+(parseInt(document.getElementById("edit-stock-sumar").value)||0);
   const foto=document.getElementById("edit-foto").value.trim();
   if(!nombre){toast("El nombre es obligatorio","error");return;}
   try {
-    await updateDoc(doc(db,"productos",p.id),{art:artNuevo,nombre,subcategoria:sub,costo,precio_venta:precio,stock,foto});
+    await updateDoc(doc(db,"productos",p.id),{art:artNuevo,nombre,subcategoria:sub,interior,costo,precio_venta:precio,stock,foto});
     cerrarModal("modal-editar-prod");
     toast(`✓ ${nombre} actualizado`,"success");
   }catch(e){toast("Error: "+e.message,"error");}
@@ -998,6 +1079,7 @@ window.guardarProducto = async function() {
       await addDoc(collection(db,"productos"),{
         art, nombre:nombre.toUpperCase(), categoria:cat,
         subcategoria:document.getElementById("c-sub").value.trim(),
+        interior:document.getElementById("c-interior").value,
         color, stock,
         costo:parseFloat(document.getElementById("c-costo").value)||0,
         precio_venta:parseFloat(document.getElementById("c-precio").value)||0,
@@ -1007,6 +1089,7 @@ window.guardarProducto = async function() {
     }
     ["c-art","c-nombre","c-sub","c-costo","c-precio","c-stock","c-foto","c-color"].forEach(id=>document.getElementById(id).value="");
     document.getElementById("c-cat").value="";
+    document.getElementById("c-interior").value="";
     document.getElementById("margen-display").style.display="none";
     document.getElementById("codigo-box").style.display="none";
     document.getElementById("codigo-manual-field").style.display="none";
@@ -1029,6 +1112,7 @@ const ALIAS_COLUMNAS = {
   categoria:      ["categoria","cat"],
   subcategoria:   ["subcategoria","sub","subcat"],
   color:          ["color","variante"],
+  interior:       ["interior","tipointerior","material","materialinterior"],
   stock:          ["stock","cantidad","stockinicial"],
   costo:          ["costo","preciocosto"],
   precio_venta:   ["precioventa","precio","preciodeventa","pventa"],
@@ -1075,6 +1159,7 @@ window.importarExcel = async function(ev) {
       const categoria = (f.categoria || "").toString().trim();
       const subcategoria = (f.subcategoria || "").toString().trim();
       const color = (f.color || "").toString().trim();
+      const interior = (f.interior || "").toString().trim();
 
       resultado.textContent = `Importando ${creados+actualizados+saltados+1} de ${filas.length}...`;
 
@@ -1085,13 +1170,14 @@ window.importarExcel = async function(ev) {
           categoria: categoria || existente.categoria || "",
           subcategoria: subcategoria || existente.subcategoria || "",
           color: color || existente.color || "",
+          interior: interior || existente.interior || "",
           stock, costo, precio_venta,
           foto: foto || existente.foto || ""
         });
         actualizados++;
       } else {
         await addDoc(collection(db,"productos"), {
-          art, nombre: nombre.toUpperCase(), categoria, subcategoria, color,
+          art, nombre: nombre.toUpperCase(), categoria, subcategoria, color, interior,
           stock, costo, precio_venta, foto, fecha_alta: serverTimestamp()
         });
         creados++;
@@ -1503,7 +1589,10 @@ cargarDatos();
       <div class="field"><label>Color / variante *</label><input type="text" id="c-color" placeholder="Negro, Marrón..." autocomplete="off" oninput="generarCodigo()"></div>
     </div>
     <div class="field"><label>Nombre del producto *</label><input type="text" id="c-nombre" placeholder="Mate Imperial Interior Acero" autocomplete="off" oninput="generarCodigo()"></div>
-    <div class="field"><label>Subcategoría</label><input type="text" id="c-sub" placeholder="Imperial, Ranchero..." autocomplete="off"></div>
+    <div class="row row-2">
+      <div class="field"><label>Subcategoría</label><input type="text" id="c-sub" placeholder="Imperial, Ranchero..." autocomplete="off"></div>
+      <div class="field"><label>Interior</label><select id="c-interior"><option value="">— Sin especificar —</option></select></div>
+    </div>
     <div class="row row-2">
       <div class="field"><label>Costo $</label><input type="number" id="c-costo" placeholder="0" oninput="calcularMargen()"></div>
       <div class="field"><label>Precio venta $</label><input type="number" id="c-precio" placeholder="0" oninput="calcularMargen()"></div>
@@ -1516,7 +1605,7 @@ cargarDatos();
     <div class="divider"></div>
     <div class="field">
       <label>📸 Foto del producto</label>
-      <input type="file" accept="image/*" capture="environment" id="c-foto-file" onchange="subirFotoCarga(event)">
+      <input type="file" accept="image/*" id="c-foto-file" onchange="subirFotoCarga(event)">
       <div style="font-size:11px;color:var(--text3);margin-top:4px">Sacá la foto o elegila de la galería — se sube automáticamente</div>
       <div id="foto-preview-carga" style="width:100%;margin-top:10px;border-radius:var(--radius-sm);overflow:hidden;display:none">
         <img id="foto-preview-img" style="width:100%;aspect-ratio:1;object-fit:cover;background:var(--card2)" alt="Preview">
@@ -1558,13 +1647,20 @@ cargarDatos();
     <button class="btn btn-secondary" onclick="agregarCategoria()">＋ Agregar categoría</button>
   </div>
   <div class="card">
+    <div class="card-title">Tipos de interior (mates)</div>
+    <div id="interiores-config"></div>
+    <div class="divider"></div>
+    <div class="field" style="margin-bottom:8px"><label>Nombre</label><input type="text" id="nuevo-interior-nombre" placeholder="Ej: Cerámica" autocomplete="off"></div>
+    <button class="btn btn-secondary" onclick="agregarInterior()">＋ Agregar interior</button>
+  </div>
+  <div class="card">
     <div class="card-title">Importar productos desde Excel</div>
     <div class="field">
       <label>Archivo (.xlsx, .xls o .csv)</label>
       <input type="file" accept=".xlsx,.xls,.csv" id="import-excel-file" onchange="importarExcel(event)">
     </div>
     <div style="font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.5">
-      Columnas reconocidas (no hace falta que estén todas ni en orden): <b>ART</b>, <b>Nombre</b>, <b>Categoría</b>, <b>Subcategoría</b>, <b>Color</b>, <b>Stock</b>, <b>Costo</b>, <b>Precio venta</b>, <b>Foto</b> (link).<br>
+      Columnas reconocidas (no hace falta que estén todas ni en orden): <b>ART</b>, <b>Nombre</b>, <b>Categoría</b>, <b>Subcategoría</b>, <b>Interior</b>, <b>Color</b>, <b>Stock</b>, <b>Costo</b>, <b>Precio venta</b>, <b>Foto</b> (link).<br>
       Si el ART ya existe, se actualiza ese producto; si no existe, se crea uno nuevo.
     </div>
     <div id="import-excel-resultado" style="display:none;font-size:13px;font-weight:600;background:var(--card2);border-radius:var(--radius-sm);padding:12px"></div>
@@ -1618,6 +1714,7 @@ cargarDatos();
     <div class="field"><label>Código ART</label><input type="text" id="edit-art-nuevo" style="font-family:monospace;font-weight:700" autocomplete="off"></div>
     <div class="field"><label>Nombre</label><input type="text" id="edit-nombre" autocomplete="off"></div>
     <div class="field"><label>Subcategoría</label><input type="text" id="edit-sub" autocomplete="off"></div>
+    <div class="field"><label>Interior</label><select id="edit-interior"><option value="">— Sin especificar —</option></select></div>
     <div class="row row-2">
       <div class="field"><label>Costo $</label><input type="number" id="edit-costo" oninput="actualizarMargenEdit()"></div>
       <div class="field"><label>Precio venta $</label><input type="number" id="edit-precio" oninput="actualizarMargenEdit()"></div>
@@ -1633,7 +1730,7 @@ cargarDatos();
     <div class="divider"></div>
     <div class="field">
       <label>📸 Foto del producto</label>
-      <input type="file" accept="image/*" capture="environment" id="edit-foto-file" onchange="subirFotoEditar(event)">
+      <input type="file" accept="image/*" id="edit-foto-file" onchange="subirFotoEditar(event)">
       <img id="foto-preview-edit" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:var(--radius-sm);margin-top:8px;display:none" alt="Preview">
       <input type="text" id="edit-foto" placeholder="...o pegá directamente un link de imagen" autocomplete="off" oninput="previewFotoEdit()" style="margin-top:8px">
     </div>
