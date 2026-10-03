@@ -200,6 +200,7 @@ function badgeEstado(estado) {
 }
 const CANALES_DEFAULT    = [["Instagram","IG"],["WhatsApp","WA"],["Tienda Nube","TN"],["Local","LOC"]];
 const INTERIORES_DEFAULT = ["Acero","PVC","Calabaza","Algarrobo","Madera"];
+const CAPACIDADES_DEFAULT = ["250ml","350ml","500ml","750ml","1 Litro","1.5 Litros","2 Litros"];
 const CATEGORIAS_DEFAULT = [["Mates","MAT"],["Stanley","STA"],["Vasos","VAS"],["Accesorios","ACC"],["Combos","COM"],["Otros","OTR"]];
 
 // ── ESTADO GLOBAL ───────────────────────────────────────
@@ -215,7 +216,8 @@ let dropdownIndex  = -1;
 let canalesList     = [];
 let categoriasList  = [];
 let interioresList  = [];
-let seedCanalesHecho = false, seedCategoriasHecho = false, seedInterioresHecho = false;
+let capacidadesList = [];
+let seedCanalesHecho = false, seedCategoriasHecho = false, seedInterioresHecho = false, seedCapacidadesHecho = false;
 
 // ── TOAST ───────────────────────────────────────────────
 function toast(msg, tipo="success") {
@@ -236,7 +238,8 @@ window.navTo = function(page) {
   if (page==="historial") renderHistorialPage();
   if (page==="pedidos")   renderMetricas();
   if (page==="resumen")   renderResumen();
-  if (page==="config")  { renderCanalesConfig(); renderCategoriasConfig(); renderInterioresConfig(); actualizarUltimaSync(); }
+  if (page==="config")  { renderCanalesConfig(); renderCategoriasConfig(); renderInterioresConfig(); renderCapacidadesConfig(); actualizarUltimaSync(); }
+  if (page==="calculadora") { if (calcModo==="combo") calcPoblarSelectItems(); calcularPrecioSugerido(); }
 }
 
 window.abrirDrawer = function() {
@@ -294,6 +297,14 @@ async function cargarDatos() {
     if (interioresList.length === 0) seedInterioresSiVacio();
     poblarSelectInterior();
     renderInterioresConfig();
+  });
+
+  // Capacidades (editables en Config)
+  onSnapshot(collection(db, "capacidades"), snap => {
+    capacidadesList = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    if (capacidadesList.length === 0) seedCapacidadesSiVacio();
+    poblarSelectCapacidad();
+    renderCapacidadesConfig();
   });
 }
 
@@ -457,6 +468,10 @@ async function seedInterioresSiVacio() {
   if (seedInterioresHecho) return; seedInterioresHecho = true;
   for (const nombre of INTERIORES_DEFAULT) await addDoc(collection(db,"interiores"),{nombre});
 }
+async function seedCapacidadesSiVacio() {
+  if (seedCapacidadesHecho) return; seedCapacidadesHecho = true;
+  for (const nombre of CAPACIDADES_DEFAULT) await addDoc(collection(db,"capacidades"),{nombre});
+}
 
 function poblarSelectInterior() {
   ["c-interior","edit-interior"].forEach(id=>{
@@ -505,6 +520,56 @@ window.eliminarInterior = async function(id) {
   const i = interioresList.find(x=>x.id===id); if (!i) return;
   if (!confirm(`¿Eliminar "${i.nombre}"? Los productos que ya lo tienen no se modifican.`)) return;
   try { await deleteDoc(doc(db,"interiores",id)); toast("🗑 Eliminado","success"); }
+  catch(e) { toast("Error: "+e.message,"error"); }
+}
+
+// ── CAPACIDADES (editables desde Config) ─────────────────
+function poblarSelectCapacidad() {
+  ["c-capacidad","edit-capacidad"].forEach(id=>{
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">— Sin especificar —</option>'+capacidadesList.map(c=>`<option value="${c.nombre}">${c.nombre}</option>`).join("");
+    if (prev && !capacidadesList.some(c=>c.nombre===prev)) sel.innerHTML += `<option value="${prev}">${prev}</option>`;
+    sel.value = prev;
+  });
+}
+
+function renderCapacidadesConfig() {
+  const el = document.getElementById("capacidades-config");
+  if (!el) return;
+  if (!capacidadesList.length) { el.innerHTML='<div class="loading">Sin capacidades cargadas</div>'; return; }
+  el.innerHTML = capacidadesList.map(c=>`
+    <div class="config-item">
+      <span class="config-item-label">${c.nombre}</span>
+      <span style="display:flex;gap:6px">
+        <button class="btn-sm btn-secondary" onclick="editarCapacidad('${c.id}')" style="padding:5px 9px">✎</button>
+        <button class="btn-sm btn-danger" onclick="eliminarCapacidad('${c.id}')" style="padding:5px 9px">🗑</button>
+      </span>
+    </div>`).join("");
+}
+
+window.agregarCapacidad = async function() {
+  const el = document.getElementById("nueva-capacidad-nombre");
+  const nombre = el.value.trim();
+  if (!nombre) { toast("Poné un valor (ej: 750ml)","error"); return; }
+  if (capacidadesList.some(c=>c.nombre.toLowerCase()===nombre.toLowerCase())) { toast("Ya existe","error"); return; }
+  try { await addDoc(collection(db,"capacidades"),{nombre}); el.value=""; toast("✓ Capacidad agregada","success"); }
+  catch(e) { toast("Error: "+e.message,"error"); }
+}
+
+window.editarCapacidad = async function(id) {
+  const c = capacidadesList.find(x=>x.id===id); if (!c) return;
+  const nuevo = prompt("Valor de capacidad:", c.nombre);
+  if (nuevo===null || !nuevo.trim()) return;
+  try { await updateDoc(doc(db,"capacidades",id),{nombre:nuevo.trim()}); toast("✓ Actualizado","success"); }
+  catch(e) { toast("Error: "+e.message,"error"); }
+}
+
+window.eliminarCapacidad = async function(id) {
+  const c = capacidadesList.find(x=>x.id===id); if (!c) return;
+  if (!confirm(`¿Eliminar "${c.nombre}"? Los productos que ya la tienen no se modifican.`)) return;
+  try { await deleteDoc(doc(db,"capacidades",id)); toast("🗑 Eliminada","success"); }
   catch(e) { toast("Error: "+e.message,"error"); }
 }
 
@@ -600,7 +665,8 @@ window.buscarProductoLive = function() {
     (p.art||"").toLowerCase().includes(q) ||
     (p.subcategoria||"").toLowerCase().includes(q) ||
     (p.color||"").toLowerCase().includes(q) ||
-    (p.interior||"").toLowerCase().includes(q)
+    (p.interior||"").toLowerCase().includes(q) ||
+    (p.capacidad||"").toLowerCase().includes(q)
   ).slice(0,8);
 
   if (!res.length) {
@@ -621,7 +687,7 @@ window.buscarProductoLive = function() {
       <div class="dropdown-art">${p.art}</div>
       <div class="dropdown-info">
         <div class="dropdown-name">${p.nombre}</div>
-        <div class="dropdown-sub">${esCombo?"Combo · "+(p.color||""):(p.subcategoria||"")+" "+(p.interior?"· "+p.interior:"")+" "+(p.color?"· "+p.color:"")}</div>
+        <div class="dropdown-sub">${esCombo?"Combo · "+(p.color||""):(p.subcategoria||"")+" "+(p.interior?"· "+p.interior:"")+" "+(p.capacidad?"· "+p.capacidad:"")+" "+(p.color?"· "+p.color:"")}</div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
         <span class="dropdown-price">$${parseFloat(p.precio_venta||0).toLocaleString("es-AR")}</span>
@@ -646,7 +712,7 @@ window.seleccionarProducto = function(idx) {
   document.getElementById("pr-nombre").textContent = p.nombre;
   document.getElementById("pr-info").textContent = esCombo
     ? `${p.art} · Combo: ${p.componentes.map(c=>c.nombre+(c.cantidad>1?" x"+c.cantidad:"")).join(", ")} · Disp: ${disp}`
-    : `${p.art} · ${p.subcategoria||""} ${p.interior?"· Int. "+p.interior:""} ${p.color?"· "+p.color:""} · Stock: ${p.stock}`;
+    : `${p.art} · ${p.subcategoria||""} ${p.interior?"· Int. "+p.interior:""} ${p.capacidad?"· "+p.capacidad:""} ${p.color?"· "+p.color:""} · Stock: ${p.stock}`;
   document.getElementById("pr-precio").textContent = `$${parseFloat(p.precio_venta||0).toLocaleString("es-AR")}`;
   document.getElementById("pr-cantidad").value = 1;
   document.getElementById("prod-result").classList.add("visible");
@@ -994,7 +1060,8 @@ function renderStock() {
     (p.nombre||"").toLowerCase().includes(busq)||
     (p.subcategoria||"").toLowerCase().includes(busq)||
     (p.color||"").toLowerCase().includes(busq)||
-    (p.interior||"").toLowerCase().includes(busq)
+    (p.interior||"").toLowerCase().includes(busq) ||
+    (p.capacidad||"").toLowerCase().includes(busq)
   );
 
   if (!data.length){el.innerHTML='<div class="loading">Sin productos</div>';return;}
@@ -1075,6 +1142,9 @@ window.editarDesdeVariante = function(firestoreId) {
   poblarSelectInterior();
   document.getElementById("edit-interior").value=p.interior||"";
   if(p.interior&&document.getElementById("edit-interior").value!==p.interior){document.getElementById("edit-interior").innerHTML+=`<option value="${p.interior}">${p.interior}</option>`;document.getElementById("edit-interior").value=p.interior;}
+  poblarSelectCapacidad();
+  document.getElementById("edit-capacidad").value=p.capacidad||"";
+  if(p.capacidad&&document.getElementById("edit-capacidad").value!==p.capacidad){document.getElementById("edit-capacidad").innerHTML+=`<option value="${p.capacidad}">${p.capacidad}</option>`;document.getElementById("edit-capacidad").value=p.capacidad;}
   document.getElementById("edit-costo").value=p.costo||"";
   document.getElementById("edit-precio").value=p.precio_venta||"";
   document.getElementById("edit-stock").value=p.stock||"0";
@@ -1113,6 +1183,7 @@ window.guardarEdicionProducto = async function() {
   const nombre=document.getElementById("edit-nombre").value.trim().toUpperCase();
   const sub=document.getElementById("edit-sub").value.trim();
   const interior=document.getElementById("edit-interior").value;
+  const capacidad=document.getElementById("edit-capacidad").value;
   const costo=parseFloat(document.getElementById("edit-costo").value)||0;
   const precio=parseFloat(document.getElementById("edit-precio").value)||0;
   const esCombo = p.componentes && p.componentes.length;
@@ -1122,7 +1193,7 @@ window.guardarEdicionProducto = async function() {
   try {
     const cambios = esCombo
       ? {art:artNuevo,nombre,costo,precio_venta:precio,foto}
-      : {art:artNuevo,nombre,subcategoria:sub,interior,costo,precio_venta:precio,stock,foto};
+      : {art:artNuevo,nombre,subcategoria:sub,interior,capacidad,costo,precio_venta:precio,stock,foto};
     await updateDoc(doc(db,"productos",p.id),cambios);
     cerrarModal("modal-editar-prod");
     toast(`✓ ${nombre} actualizado`,"success");
@@ -1190,7 +1261,7 @@ let comboItemsTemp = [];
 window.toggleComboUI = function() {
   const esCombo = document.getElementById("c-cat").value==="Combos";
   document.getElementById("c-combo-builder").style.display = esCombo?"block":"none";
-  document.getElementById("c-sub-interior-row").style.display = esCombo?"none":"grid";
+  document.getElementById("c-sub-interior-row").style.display = esCombo?"none":"block";
   document.getElementById("c-stock-field").style.display = esCombo?"none":"block";
   document.getElementById("c-color-label").textContent = esCombo?"Nombre del combo *":"Color / variante *";
   document.getElementById("c-color").placeholder = esCombo?"Ranchero Premium, Imperial Dúo...":"Negro, Marrón...";
@@ -1285,6 +1356,7 @@ window.guardarProducto = async function() {
       } else {
         datos.subcategoria = document.getElementById("c-sub").value.trim();
         datos.interior = document.getElementById("c-interior").value;
+        datos.capacidad = document.getElementById("c-capacidad").value;
       }
       await addDoc(collection(db,"productos"), datos);
       toast(esCombo?"✓ Combo guardado":"✓ Producto guardado","success");
@@ -1292,6 +1364,7 @@ window.guardarProducto = async function() {
     ["c-art","c-nombre","c-sub","c-costo","c-precio","c-stock","c-foto","c-color"].forEach(id=>document.getElementById(id).value="");
     document.getElementById("c-cat").value="";
     document.getElementById("c-interior").value="";
+    document.getElementById("c-capacidad").value="";
     comboItemsTemp=[];
     renderComboItemsList();
     toggleComboUI();
@@ -1319,6 +1392,7 @@ const ALIAS_COLUMNAS = {
   subcategoria:   ["subcategoria","sub","subcat"],
   color:          ["color","variante"],
   interior:       ["interior","tipointerior","material","materialinterior"],
+  capacidad:      ["capacidad","tamano","tamaño","volumen","ml","litros"],
   stock:          ["stock","cantidad","stockinicial"],
   costo:          ["costo","preciocosto"],
   precio_venta:   ["precioventa","precio","preciodeventa","pventa"],
@@ -1366,6 +1440,7 @@ window.importarExcel = async function(ev) {
       const subcategoria = (f.subcategoria || "").toString().trim();
       const color = (f.color || "").toString().trim();
       const interior = (f.interior || "").toString().trim();
+      const capacidad = (f.capacidad || "").toString().trim();
 
       resultado.textContent = `Importando ${creados+actualizados+saltados+1} de ${filas.length}...`;
 
@@ -1377,13 +1452,14 @@ window.importarExcel = async function(ev) {
           subcategoria: subcategoria || existente.subcategoria || "",
           color: color || existente.color || "",
           interior: interior || existente.interior || "",
+          capacidad: capacidad || existente.capacidad || "",
           stock, costo, precio_venta,
           foto: foto || existente.foto || ""
         });
         actualizados++;
       } else {
         await addDoc(collection(db,"productos"), {
-          art, nombre: nombre.toUpperCase(), categoria, subcategoria, color, interior,
+          art, nombre: nombre.toUpperCase(), categoria, subcategoria, color, interior, capacidad,
           stock, costo, precio_venta, foto, fecha_alta: serverTimestamp()
         });
         creados++;
@@ -1649,67 +1725,93 @@ function actualizarUltimaSync() {
 
 // ── INIT ────────────────────────────────────────────────
 document.getElementById("fecha-hoy").textContent=new Date().toLocaleDateString("es-AR",{weekday:"long",day:"numeric",month:"long"});
-// ── CALCULADORA ──────────────────────────────────────────
-let calcActual = "0";
-let calcPrevio = "";
-let calcOperador = null;
-let calcResetProximo = false;
+// ── CALCULADORA DE PRECIOS ───────────────────────────────
+let calcModo = "individual";
+let calcItemsCombo = []; // {nombre, costo, cantidad}
 
-function calcFormat(n) {
-  if (n==="Error") return n;
-  const num = parseFloat(n.toString().replace(",","."));
-  if (isNaN(num)) return "0";
-  let str = num.toLocaleString("es-AR",{maximumFractionDigits:8});
-  return str;
+window.calcCambiarModo = function(modo) {
+  if (!document.getElementById("calc-tab-individual")) return;
+  calcModo = modo;
+  document.getElementById("calc-tab-individual").className = modo==="individual"?"btn-sm btn-accent2":"btn-sm btn-secondary";
+  document.getElementById("calc-tab-combo").className = modo==="combo"?"btn-sm btn-accent2":"btn-sm btn-secondary";
+  document.getElementById("calc-modo-individual").style.display = modo==="individual"?"block":"none";
+  document.getElementById("calc-modo-combo").style.display = modo==="combo"?"block":"none";
+  if (modo==="combo") calcPoblarSelectItems();
+  calcularPrecioSugerido();
 }
 
-function calcRender() {
-  document.getElementById("calc-actual").textContent = calcActual;
-  document.getElementById("calc-prev").textContent = calcPrevio ? `${calcPrevio} ${calcOperador||""}` : "0";
+function calcPoblarSelectItems() {
+  const sel=document.getElementById("calc-item-select");
+  if (!sel) return;
+  sel.innerHTML='<option value="">— Elegí —</option>'+productos.filter(p=>!(p.componentes&&p.componentes.length)).map(p=>
+    `<option value="${p.id}">${p.nombre}${p.color?" ("+p.color+")":""} — Costo: $${parseFloat(p.costo||0).toLocaleString("es-AR")}</option>`
+  ).join("");
 }
 
-function calcOperar(a,op,b) {
-  const x=parseFloat(a.toString().replace(",","."));
-  const y=parseFloat(b.toString().replace(",","."));
-  if (isNaN(x)||isNaN(y)) return "Error";
-  switch(op){
-    case "+": return x+y;
-    case "-": return x-y;
-    case "×": return x*y;
-    case "÷": return y===0?"Error":x/y;
-    default: return y;
+window.calcAgregarItem = function() {
+  const sel=document.getElementById("calc-item-select");
+  const id=sel.value;
+  if (!id) { toast("Elegí un producto","error"); return; }
+  const cant=parseInt(document.getElementById("calc-item-cant").value)||1;
+  const prod=productos.find(p=>p.id===id);
+  if (!prod) return;
+  calcItemsCombo.push({nombre:prod.nombre, costo:parseFloat(prod.costo||0), cantidad:cant});
+  sel.value=""; document.getElementById("calc-item-cant").value="1";
+  calcRenderItems();
+}
+
+window.calcAgregarItemManual = function() {
+  const nombreEl=document.getElementById("calc-item-nombre-manual");
+  const costoEl=document.getElementById("calc-item-costo-manual");
+  const nombre=nombreEl.value.trim()||"Ítem";
+  const costo=parseFloat(costoEl.value)||0;
+  if (costo<=0) { toast("Ingresá un costo","error"); return; }
+  calcItemsCombo.push({nombre, costo, cantidad:1});
+  nombreEl.value=""; costoEl.value="";
+  calcRenderItems();
+}
+
+window.calcQuitarItem = function(i) {
+  calcItemsCombo.splice(i,1);
+  calcRenderItems();
+}
+
+function calcRenderItems() {
+  const el=document.getElementById("calc-items-list");
+  if (!el) return;
+  if (!calcItemsCombo.length) el.innerHTML='<div class="loading">Sin ítems agregados</div>';
+  else el.innerHTML = calcItemsCombo.map((it,i)=>`
+    <div class="config-item">
+      <span class="config-item-label">${it.nombre} ${it.cantidad>1?"x"+it.cantidad:""}</span>
+      <span style="display:flex;align-items:center;gap:8px">
+        <span style="color:var(--text3);font-size:12px">$${(it.costo*it.cantidad).toLocaleString("es-AR")}</span>
+        <button class="btn-sm btn-danger" onclick="calcQuitarItem(${i})" style="padding:4px 8px">🗑</button>
+      </span>
+    </div>`).join("");
+  calcularPrecioSugerido();
+}
+
+window.calcularPrecioSugerido = function() {
+  const margenEl=document.getElementById("calc-margen");
+  if (!margenEl) return;
+  const margen=parseFloat(margenEl.value)||0;
+  document.getElementById("calc-margen-valor").textContent=margen+"%";
+
+  let costoTotal = 0;
+  if (calcModo==="individual") {
+    costoTotal = parseFloat(document.getElementById("calc-costo-individual").value)||0;
+  } else {
+    costoTotal = calcItemsCombo.reduce((s,it)=>s+it.costo*it.cantidad,0);
+    const totalEl=document.getElementById("calc-costo-total");
+    if (totalEl) totalEl.textContent="$"+costoTotal.toLocaleString("es-AR",{maximumFractionDigits:0});
   }
-}
 
-window.calcAccion = function(tipo, valor) {
-  if (!document.getElementById("calc-display")) return;
-  if (tipo==="clear") {
-    calcActual="0"; calcPrevio=""; calcOperador=null; calcResetProximo=false;
-  } else if (tipo==="backspace") {
-    calcActual = calcActual.length>1 ? calcActual.slice(0,-1) : "0";
-  } else if (tipo==="num") {
-    if (calcActual==="0"||calcResetProximo||calcActual==="Error") { calcActual=valor; calcResetProximo=false; }
-    else calcActual += valor;
-  } else if (tipo==="punto") {
-    if (calcResetProximo||calcActual==="Error") { calcActual="0,"; calcResetProximo=false; }
-    else if (!calcActual.includes(",")) calcActual += ",";
-  } else if (tipo==="porcentaje") {
-    const n=parseFloat(calcActual.replace(",","."))||0;
-    calcActual = calcFormat(n/100);
-  } else if (tipo==="op") {
-    if (calcPrevio && calcOperador && !calcResetProximo) {
-      calcActual = calcFormat(calcOperar(calcPrevio, calcOperador, calcActual));
-    }
-    calcPrevio = calcActual;
-    calcOperador = valor;
-    calcResetProximo = true;
-  } else if (tipo==="igual") {
-    if (calcPrevio && calcOperador) {
-      calcActual = calcFormat(calcOperar(calcPrevio, calcOperador, calcActual));
-      calcPrevio=""; calcOperador=null; calcResetProximo=true;
-    }
-  }
-  calcRender();
+  const precio = margen<100 ? costoTotal/(1-margen/100) : 0;
+  const ganancia = precio-costoTotal;
+
+  document.getElementById("calc-res-costo").textContent="$"+costoTotal.toLocaleString("es-AR",{maximumFractionDigits:0});
+  document.getElementById("calc-res-ganancia").textContent="$"+ganancia.toLocaleString("es-AR",{maximumFractionDigits:0});
+  document.getElementById("calc-res-precio").textContent="$"+precio.toLocaleString("es-AR",{maximumFractionDigits:0});
 }
 
 cargarDatos();
@@ -1961,9 +2063,12 @@ cargarDatos();
       <div class="field"><label id="c-color-label">Color / variante *</label><input type="text" id="c-color" placeholder="Negro, Marrón..." autocomplete="off" oninput="generarCodigo()"></div>
     </div>
     <div class="field"><label>Nombre del producto *</label><input type="text" id="c-nombre" placeholder="Mate Imperial Interior Acero" autocomplete="off" oninput="generarCodigo()"></div>
-    <div class="row row-2" id="c-sub-interior-row">
-      <div class="field"><label>Subcategoría</label><input type="text" id="c-sub" placeholder="Imperial, Ranchero..." autocomplete="off"></div>
-      <div class="field"><label>Interior</label><select id="c-interior"><option value="">— Sin especificar —</option></select></div>
+    <div id="c-sub-interior-row">
+      <div class="row row-2">
+        <div class="field"><label>Subcategoría</label><input type="text" id="c-sub" placeholder="Imperial, Ranchero..." autocomplete="off"></div>
+        <div class="field"><label>Interior</label><select id="c-interior"><option value="">— Sin especificar —</option></select></div>
+      </div>
+      <div class="field"><label>Capacidad</label><select id="c-capacidad"><option value="">— Sin especificar —</option></select></div>
     </div>
 
     <div class="card" id="c-combo-builder" style="display:none;background:var(--card2);margin:4px 0 16px">
@@ -2001,36 +2106,54 @@ cargarDatos();
 
 <!-- PAGE: CALCULADORA -->
 <div class="page" id="page-calculadora">
-  <div class="page-header"><h1><span class="accent">Calculadora</span></h1><p>Para cuentas rápidas sin salir de la app</p></div>
+  <div class="page-header"><h1>Calculadora de <span class="accent">precios</span></h1><p>Calculá el precio de venta según el margen que quieras ganar</p></div>
+
   <div class="card">
-    <div id="calc-display" style="background:var(--card2);border-radius:var(--radius-sm);padding:18px 16px;margin-bottom:14px;text-align:right">
-      <div id="calc-prev" style="font-size:13px;color:var(--text3);min-height:16px;overflow-wrap:anywhere">0</div>
-      <div id="calc-actual" style="font-size:34px;font-weight:700;overflow-wrap:anywhere">0</div>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <button class="btn-sm btn-accent2" id="calc-tab-individual" onclick="calcCambiarModo('individual')" style="flex:1">Un producto</button>
+      <button class="btn-sm btn-secondary" id="calc-tab-combo" onclick="calcCambiarModo('combo')" style="flex:1">Varios ítems / Combo</button>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
-      <button class="btn btn-secondary" onclick="calcAccion('clear')" style="color:var(--danger)">C</button>
-      <button class="btn btn-secondary" onclick="calcAccion('backspace')">⌫</button>
-      <button class="btn btn-secondary" onclick="calcAccion('porcentaje')">%</button>
-      <button class="btn btn-secondary" onclick="calcAccion('op','÷')" style="color:var(--accent)">÷</button>
 
-      <button class="btn btn-secondary" onclick="calcAccion('num','7')">7</button>
-      <button class="btn btn-secondary" onclick="calcAccion('num','8')">8</button>
-      <button class="btn btn-secondary" onclick="calcAccion('num','9')">9</button>
-      <button class="btn btn-secondary" onclick="calcAccion('op','×')" style="color:var(--accent)">×</button>
+    <div id="calc-modo-individual">
+      <div class="field"><label>Costo del producto $</label><input type="number" id="calc-costo-individual" placeholder="0" oninput="calcularPrecioSugerido()"></div>
+    </div>
 
-      <button class="btn btn-secondary" onclick="calcAccion('num','4')">4</button>
-      <button class="btn btn-secondary" onclick="calcAccion('num','5')">5</button>
-      <button class="btn btn-secondary" onclick="calcAccion('num','6')">6</button>
-      <button class="btn btn-secondary" onclick="calcAccion('op','-')" style="color:var(--accent)">−</button>
+    <div id="calc-modo-combo" style="display:none">
+      <div class="row row-2">
+        <div class="field" style="margin-bottom:8px"><label>Producto del catálogo</label><select id="calc-item-select"><option value="">— Elegí —</option></select></div>
+        <div class="field" style="margin-bottom:8px"><label>Cantidad</label><input type="number" id="calc-item-cant" value="1" min="1"></div>
+      </div>
+      <button type="button" class="btn btn-secondary" onclick="calcAgregarItem()">＋ Agregar del catálogo</button>
 
-      <button class="btn btn-secondary" onclick="calcAccion('num','1')">1</button>
-      <button class="btn btn-secondary" onclick="calcAccion('num','2')">2</button>
-      <button class="btn btn-secondary" onclick="calcAccion('num','3')">3</button>
-      <button class="btn btn-secondary" onclick="calcAccion('op','+')" style="color:var(--accent)">+</button>
+      <div style="font-size:11px;color:var(--text3);margin:14px 0 6px">...o algo que todavía no está cargado:</div>
+      <div class="row row-2">
+        <div class="field" style="margin-bottom:8px"><label>Nombre</label><input type="text" id="calc-item-nombre-manual" placeholder="Ej: Caja regalo" autocomplete="off"></div>
+        <div class="field" style="margin-bottom:8px"><label>Costo $</label><input type="number" id="calc-item-costo-manual" placeholder="0"></div>
+      </div>
+      <button type="button" class="btn btn-secondary" onclick="calcAgregarItemManual()">＋ Agregar manual</button>
 
-      <button class="btn btn-secondary" onclick="calcAccion('num','0')" style="grid-column:span 2">0</button>
-      <button class="btn btn-secondary" onclick="calcAccion('punto')">,</button>
-      <button class="btn btn-primary" onclick="calcAccion('igual')">=</button>
+      <div id="calc-items-list" style="margin:14px 0 6px"></div>
+      <div class="config-item"><span class="config-item-label">Costo total</span><span class="config-item-value" id="calc-costo-total">$0</span></div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="field">
+      <label>Margen de ganancia deseado</label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="range" id="calc-margen" min="0" max="90" value="40" step="1" style="flex:1" oninput="calcularPrecioSugerido()">
+        <span id="calc-margen-valor" style="font-weight:700;min-width:48px;text-align:right">40%</span>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">% de ganancia sobre el precio final de venta</div>
+    </div>
+
+    <div style="background:var(--card2);border-radius:var(--radius-sm);padding:16px;margin-top:6px">
+      <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text2);margin-bottom:6px"><span>Costo</span><span id="calc-res-costo">$0</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text2);margin-bottom:10px"><span>Ganancia</span><span id="calc-res-ganancia">$0</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;border-top:1px dashed var(--border);padding-top:10px">
+        <span style="font-size:14px;font-weight:600">Precio de venta sugerido</span>
+        <span id="calc-res-precio" style="font-size:26px;font-weight:800;color:var(--accent)">$0</span>
+      </div>
     </div>
   </div>
 </div>
@@ -2073,13 +2196,20 @@ cargarDatos();
     <button class="btn btn-secondary" onclick="agregarInterior()">＋ Agregar interior</button>
   </div>
   <div class="card">
+    <div class="card-title">Capacidades (termos, botellas)</div>
+    <div id="capacidades-config"></div>
+    <div class="divider"></div>
+    <div class="field" style="margin-bottom:8px"><label>Valor</label><input type="text" id="nueva-capacidad-nombre" placeholder="Ej: 600ml" autocomplete="off"></div>
+    <button class="btn btn-secondary" onclick="agregarCapacidad()">＋ Agregar capacidad</button>
+  </div>
+  <div class="card">
     <div class="card-title">Importar productos desde Excel</div>
     <div class="field">
       <label>Archivo (.xlsx, .xls o .csv)</label>
       <input type="file" accept=".xlsx,.xls,.csv" id="import-excel-file" onchange="importarExcel(event)">
     </div>
     <div style="font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.5">
-      Columnas reconocidas (no hace falta que estén todas ni en orden): <b>ART</b>, <b>Nombre</b>, <b>Categoría</b>, <b>Subcategoría</b>, <b>Interior</b>, <b>Color</b>, <b>Stock</b>, <b>Costo</b>, <b>Precio venta</b>, <b>Foto</b> (link).<br>
+      Columnas reconocidas (no hace falta que estén todas ni en orden): <b>ART</b>, <b>Nombre</b>, <b>Categoría</b>, <b>Subcategoría</b>, <b>Interior</b>, <b>Capacidad</b>, <b>Color</b>, <b>Stock</b>, <b>Costo</b>, <b>Precio venta</b>, <b>Foto</b> (link).<br>
       Si el ART ya existe, se actualiza ese producto; si no existe, se crea uno nuevo.
     </div>
     <div id="import-excel-resultado" style="display:none;font-size:13px;font-weight:600;background:var(--card2);border-radius:var(--radius-sm);padding:12px"></div>
@@ -2143,6 +2273,7 @@ cargarDatos();
     <div id="edit-sub-interior-row">
       <div class="field"><label>Subcategoría</label><input type="text" id="edit-sub" autocomplete="off"></div>
       <div class="field"><label>Interior</label><select id="edit-interior"><option value="">— Sin especificar —</option></select></div>
+      <div class="field"><label>Capacidad</label><select id="edit-capacidad"><option value="">— Sin especificar —</option></select></div>
     </div>
     <div class="field" id="edit-combo-info" style="display:none">
       <label>🧩 Composición del combo</label>
